@@ -6,6 +6,8 @@ from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 
@@ -19,9 +21,11 @@ def __getattr__(name):
 
 def train_multiclass_classifier(features, labels, classifier, classifier_param):
     if classifier == "multiclass-svm":
-        model = SVC(C=classifier_param, probability=True)
+        model = make_pipeline(StandardScaler(), SVC(C=classifier_param, kernel="linear"))
+    elif classifier == "multiclass-svm-weighted":
+        model = make_pipeline(StandardScaler(), SVC(C=classifier_param, kernel="linear", class_weight="balanced"))
     elif classifier == "random-forest":
-        model = RandomForestClassifier(n_estimators=int(classifier_param))
+        model = RandomForestClassifier(n_estimators=int(classifier_param), min_samples_leaf=5)
     elif classifier == "gradient-boosting":
         model = GradientBoostingClassifier(n_estimators=int(classifier_param))
     elif classifier == "knn":
@@ -87,28 +91,37 @@ def _train_pytorch_mlp(features, labels, classifier_param):
 
 
 def train_gradient_boosting(train_features, train_labels, classifier_param):
-    model = GradientBoostingClassifier(n_estimators=int(classifier_param), max_depth=3, learning_rate=0.1)
+    model = GradientBoostingClassifier(n_estimators=int(classifier_param), max_leaf_nodes=21, learning_rate=0.1)
     model.fit(train_features, train_labels)
     return model
 
 
 def train_for_stimulus_lasso_glm(train_features, train_labels, lambda_):
-    model = LogisticRegression(penalty="l1", C=lambda_, solver="liblinear")
+    model = make_pipeline(
+        StandardScaler(),
+        LogisticRegression(penalty="l1", C=1 / lambda_, solver="liblinear", max_iter=1000),
+    )
     model.fit(train_features, train_labels)
     return model
 
 
 def train_binary_svm(train_features, train_labels, box_constraint):
-    model = SVC(C=box_constraint, kernel="linear", probability=True)
+    model = make_pipeline(StandardScaler(), SVC(C=box_constraint, kernel="linear"))
     model.fit(train_features, train_labels)
     return model
 
 
 def get_default_classifier_param(classifier):
+    if classifier == "lasso":
+        return 0.005
     if classifier == "multiclass-svm":
-        return 3.0
+        return 0.5
+    if classifier == "multiclass-svm-weighted":
+        return 0.5
+    if classifier in ["svm-binary", "binary-svm"]:
+        return 0.5
     if classifier == "random-forest":
-        return 250
+        return 100
     if classifier == "gradient-boosting":
         return 100
     if classifier == "knn":
