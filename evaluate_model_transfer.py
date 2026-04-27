@@ -18,7 +18,8 @@ import xgboost as xgb
 
 def evaluate_model_transfer(data_folder, parts, window_size=0.1, train_window_center=0.2, 
                             null_window_center=-0.2, new_framerate=float('inf'), classifier='multiclass-svm', 
-                            classifier_param=np.nan, components_pca=100, frequency_range=(0, float('inf'))):
+                            classifier_param=np.nan, components_pca=100, frequency_range=(0, float('inf')),
+                            return_feature_importance=False):
 
     if not isinstance(classifier_param, dict) and np.all(np.isnan(classifier_param)):
         classifier_param = get_default_classifier_param(classifier)
@@ -50,22 +51,34 @@ def evaluate_model_transfer(data_folder, parts, window_size=0.1, train_window_ce
 
     features_val_exp = np.hstack(stimuli_features_val_exp).T
     
+    pca_components = None
     if components_pca != float('inf'):
         features_train_exp, coeff, features_train_exp_mean, explained_variance = reduce_features_pca(features_train_exp, components_pca)
         print(f'Explained Variance by {components_pca} components: {explained_variance:.2f}%')
-        features_val_exp = (features_val_exp - features_train_exp_mean) @ coeff[:, :components_pca]
+        pca_components = coeff[:, :components_pca]
+        features_val_exp = (features_val_exp - features_train_exp_mean) @ pca_components
     
     model = train_multiclass_classifier(features_train_exp, labels_train_exp, classifier, classifier_param)
     predictions_val_exp = model.predict(features_val_exp)
 
     accuracy = np.mean(predictions_val_exp == labels_val_exp)
 
-    svm_coefficients = model.coef_
-    pca_pseudoinverse = np.linalg.pinv(coeff[:, :components_pca])
-    original_feature_importance = pca_pseudoinverse.T @ svm_coefficients.T
-    original_feature_importance = original_feature_importance.T  # Transpose to match dimensions
+    if return_feature_importance:
+        return accuracy, get_original_feature_importance(model, pca_components)
 
-    return accuracy, original_feature_importance
+    return accuracy
+
+
+def get_original_feature_importance(model, pca_components=None):
+    if not hasattr(model, 'coef_'):
+        raise ValueError('Feature importance is only available for linear classifiers with coefficients.')
+
+    feature_importance = model.coef_
+    if pca_components is not None:
+        pca_pseudoinverse = np.linalg.pinv(pca_components)
+        feature_importance = (pca_pseudoinverse.T @ feature_importance.T).T
+
+    return feature_importance
 
 def preprocess_features(data, frequency_range, new_framerate, window_size, train_window_center, null_window_center):
     data = filter_features(data, frequency_range[0], frequency_range[1])
