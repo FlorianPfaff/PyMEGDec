@@ -2,7 +2,30 @@ import numpy as np
 import re
 import matplotlib.pyplot as plt
 import scipy.io as sio
-from extract_alpha_signal import extract_phase
+from extract_alpha_signal import (
+    extract_alpha_signal_and_phase,
+    get_data_field,
+    get_time_vector,
+    get_trial_signal,
+)
+
+
+def _label_to_string(label):
+    value = label
+    while isinstance(value, np.ndarray):
+        if value.size == 0:
+            return ''
+        value = value.flat[0]
+    if isinstance(value, bytes):
+        return value.decode('utf-8')
+    return str(value)
+
+
+def _get_channel_names(data):
+    labels = np.asarray(get_data_field(data, 'label'), dtype=object)
+    if labels.ndim == 0:
+        labels = np.asarray([labels.item()], dtype=object)
+    return [_label_to_string(label) for label in labels.ravel()]
 
 def extract_channels_by_location(data, location_pattern):
     """
@@ -15,11 +38,12 @@ def extract_channels_by_location(data, location_pattern):
     Returns:
         list: List of indices of the channels matching the location pattern.
     """
-    channel_names = [subarray[0][0] for subarray in data[0][0]]
-    extracted_strings = [(index, string) for index, string in enumerate(channel_names)]
-
     pattern = re.compile(location_pattern)
-    channel_indices = [index for index, string in extracted_strings if pattern.match(string)]
+    channel_indices = [
+        index
+        for index, channel_name in enumerate(_get_channel_names(data))
+        if pattern.match(channel_name)
+    ]
     
     return channel_indices
 
@@ -61,7 +85,8 @@ def calculate_phase_differences(phases):
 
     for i in range(num_channels):
         for j in range(num_channels):
-            phase_diffs[i, j] = np.mean(np.abs(phases[i] - phases[j]))
+            phase_delta = np.angle(np.exp(1j * (phases[i] - phases[j])))
+            phase_diffs[i, j] = np.mean(np.abs(phase_delta))
     
     return phase_diffs
 
@@ -96,19 +121,21 @@ def extract_phases_and_channels(data, trial_idx, location_pattern):
     Returns:
         tuple: Phases and channel indices.
     """
-    time_vector = data['time'][0][0][trial_idx][0]
-    signal = data['trial'][0][0][trial_idx]
+    time_vector = get_time_vector(data, trial_idx)
+    signal = get_trial_signal(data, trial_idx)
     
     sampling_rate = 1 / np.diff(time_vector[:2])[0]
     channel_indices = extract_channels_by_location(data, location_pattern)
+    if not channel_indices:
+        raise ValueError(f'No channels matched pattern: {location_pattern}')
 
     phases = []
     signals = []
     for channel_idx in channel_indices:
         signal_curr_chan = signal[channel_idx, :]
-        phase = extract_phase(signal_curr_chan, sampling_rate)
+        filtered_signal, phase = extract_alpha_signal_and_phase(signal_curr_chan, sampling_rate)
         phases.append(phase)
-        signals.append(signal_curr_chan)
+        signals.append(filtered_signal)
     
     return phases, channel_indices, time_vector, signals
 
@@ -142,7 +169,7 @@ def visualize_phase_shifts(data, trial_idx=0, location_pattern=r'^M.O..$'):
 if __name__ == "__main__":
     trial_idx = 0
     time_window = (0, 1)
-    data_folder = r'C:\Users\emper\owncloud-ld\Persönlich\Neuroscience'
+    data_folder = r'.'
     part = 2
     location_pattern = r'^M.O..$'
 
