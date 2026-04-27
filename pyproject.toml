@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pymegdec"
+version = "0.1.0"
+description = "MEG decoding utilities for model transfer and cross-validation experiments."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scikit-learn",
+    "scipy",
+]
+
+[project.optional-dependencies]
+xgboost = [
+    "xgboost",
+]
+torch = [
+    "pytorch-lightning",
+    "torch",
+]
+all = [
+    "pytorch-lightning",
+    "torch",
+    "xgboost",
+]
+dev = [
+    "pytest",
+    "pytorch-lightning",
+    "torch",
+    "xgboost",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
