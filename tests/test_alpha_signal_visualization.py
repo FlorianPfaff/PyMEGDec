@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
 import numpy as np
-from extract_alpha_signal import extract_phase, extract_time_basis, get_time_vector
-from show_bandpass_signal_and_shifts import (
+from pymegdec.alpha_signal import extract_phase, extract_time_basis, get_time_vector
+from pymegdec.alpha_visualization import (
     calculate_phase_differences,
     extract_channels_by_location,
     show_bandpass_filtered_signals,
@@ -68,7 +68,7 @@ class TestAlphaChannelMethods(unittest.TestCase):
         self.assertEqual(phase.shape, signal.shape)
         self.assertTrue(np.all(np.isfinite(phase)))
     
-    @patch('show_bandpass_signal_and_shifts.plt.show')
+    @patch('pymegdec.alpha_visualization.plt.show')
     def test_show_bandpass_filtered_signals(self, mock_show):
         trial_idx = 0
         time_window = (0, 1)
@@ -79,7 +79,7 @@ class TestAlphaChannelMethods(unittest.TestCase):
         self.assertEqual(phases[0].shape, get_time_vector(self.data, trial_idx).shape)
         mock_show.assert_called_once()
     
-    @patch('show_bandpass_signal_and_shifts.plt.show')
+    @patch('pymegdec.alpha_visualization.plt.show')
     def test_visualize_phase_shifts(self, mock_show):
         trial_idx = 0
         location_pattern = r'^M.O..$'
