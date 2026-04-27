@@ -1,4 +1,4 @@
-name: Python Tests for Alpha Signal Visualization
+name: Alpha signal visualization tests
 
 permissions:
   contents: read
