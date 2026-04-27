@@ -1,0 +1,29 @@
+[project]
+name = "pymegdec"
+version = "0.1.0"
+description = "Utilities for MEG decoding experiments."
+authors = [
+  { name = "Florian Pfaff", email = "pfaff@ias.uni-stuttgart.de" },
+]
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "numpy",
+  "scipy",
+  "scikit-learn",
+  "xgboost",
+  "torch",
+  "pytorch-lightning",
+]
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+autopep8 = "^2.3.2"
+
+[tool.ruff]
+line-length = 180
+
+[tool.pylint.FORMAT]
+max-line-length = 180
