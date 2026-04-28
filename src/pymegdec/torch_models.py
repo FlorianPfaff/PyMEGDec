@@ -2,12 +2,19 @@
 
 import pytorch_lightning as pl
 import torch
-import torch.nn as nn
-from torch import optim
+from torch import nn, optim
 
 
 class MLPClassifierTorch(pl.LightningModule):
-    def __init__(self, input_dim, hidden_dim, output_dim, learning_rate=1e-3, dropout_rate=0.2):
+    def __init__(
+        self,
+        input_dim,
+        hidden_dim,
+        output_dim,
+        *,
+        learning_rate=1e-3,
+        dropout_rate=0.2,
+    ):
         super().__init__()
         self.layer_1 = nn.Linear(input_dim, hidden_dim)
         self.layer_2 = nn.Linear(hidden_dim, hidden_dim)
@@ -34,14 +41,14 @@ class MLPClassifierTorch(pl.LightningModule):
             predictions = self.layer_3(predictions)
         return torch.argmax(predictions, dim=1).numpy()
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, _batch_idx):
         x, y = batch
         y_hat = self.forward(x)
         loss = self.criterion(y_hat, y)
         self.log("train_loss", loss)
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, _batch_idx):
         x, y = batch
         y_hat = self.forward(x)
         loss = self.criterion(y_hat, y)
