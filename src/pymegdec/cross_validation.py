@@ -75,11 +75,10 @@ def cross_validate_single_dataset(
                     model = train_for_stimulus_lasso_glm(train_features, train_labels == stim, classifier_param)
                 elif classifier == "svm-binary":
                     model = train_binary_svm(train_features, train_labels == stim, classifier_param)
-                all_pred[:, stim - 1] = (
-                    model.predict_proba(test_features)[:, 1]
-                    if classifier == "svm-binary"
-                    else model.predict(test_features)
-                )
+                if classifier in ["lasso", "svm-binary"]:
+                    all_pred[:, stim - 1] = _positive_class_score(model, test_features)
+                else:
+                    all_pred[:, stim - 1] = model.predict(test_features)
             pred_lbl[fold == f] = np.argmax(all_pred, axis=1) + 1
         else:
             model = train_multiclass_classifier(train_features, train_labels, classifier, classifier_param)
@@ -98,6 +97,12 @@ def cross_validate_single_dataset(
     print(f'Participant {participant_id}: {accuracy * 100:.2f}% accuracy')
 
     return accuracy
+
+
+def _positive_class_score(model, features):
+    if hasattr(model, "decision_function"):
+        return model.decision_function(features)
+    return model.predict_proba(features)[:, 1]
 
 
 if __name__ == "__main__":
