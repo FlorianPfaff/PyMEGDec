@@ -148,6 +148,16 @@ stepwise speed, displacement from the first sampled time point, the peak-power
 channel, and a spatial concentration score. Treat the trajectory as movement of
 the measured alpha topography over sensors, not as anatomical source motion.
 
+Movement summaries can be analyzed into pre/post stimulus effects and simple
+condition-level plots:
+
+```powershell
+python analyze_alpha_movement_results.py --movement-summary outputs\part2_alpha_movement_summary.csv --effect-output outputs\part2_alpha_movement_effects.csv --condition-summary-output outputs\part2_alpha_movement_condition_summary.csv --plots-dir outputs\part2_alpha_movement_plots
+```
+
+The effects compare the mean pre-stimulus centroid with the mean post-stimulus
+centroid, and summarize speed, alpha power, and spatial concentration changes.
+
 ## Alpha and reaction time
 
 The saved MEG `Part*Data.mat` files may not contain reaction times. The RT
