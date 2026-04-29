@@ -12,10 +12,21 @@ from pymegdec.model_transfer import (
     evaluate_model_transfer,
     get_original_feature_importance,
 )
+from pymegdec.reaction_time_analysis import (
+    AlphaReactionTimeExportConfig,
+    ReactionTimeCsvConfig,
+    ReactionTimeUnavailableError,
+    analyze_alpha_reaction_times,
+    join_alpha_reaction_times,
+)
 
 __all__ = [
     "DATA_DIR_ENV_VAR",
     "AlphaMetricConfig",
+    "AlphaReactionTimeExportConfig",
+    "ReactionTimeCsvConfig",
+    "ReactionTimeUnavailableError",
+    "analyze_alpha_reaction_times",
     "compute_alpha_metrics",
     "cross_validate_single_dataset",
     "evaluate_model_transfer",
@@ -23,5 +34,6 @@ __all__ = [
     "extract_phase",
     "extract_time_basis",
     "get_original_feature_importance",
+    "join_alpha_reaction_times",
     "resolve_data_folder",
 ]

@@ -10,9 +10,10 @@ from pathlib import Path
 import numpy as np
 import scipy.io as sio
 import scipy.signal
+from scipy.spatial import Delaunay  # pylint: disable=no-name-in-module
+
 from pymegdec.alpha_signal import get_data_field, get_time_vector, get_trial_signal
 from pymegdec.data_config import resolve_data_folder
-from scipy.spatial import Delaunay  # pylint: disable=no-name-in-module
 
 DEFAULT_OCCIPITAL_PATTERN = r"^M[LRZ]O"
 DEFAULT_TIME_WINDOW = (-0.4, -0.05)
@@ -117,7 +118,9 @@ def _trial_label(data, trial_idx):
     return trialinfo[trial_idx].item()
 
 
-def _n_trials(data):
+def count_trials(data):
+    """Return the number of trials in a FieldTrip-like data structure."""
+
     trial_field = np.asarray(get_data_field(data, "trial"), dtype=object)
     if trial_field.ndim == 2 and trial_field.shape[0] == 1:
         return trial_field.shape[1]
@@ -260,7 +263,7 @@ def compute_alpha_metrics(
     config = config or AlphaMetricConfig()
     channel_indices = _resolve_channel_indices(data, channel_indices, config)
 
-    n_trials = _n_trials(data)
+    n_trials = count_trials(data)
     return [
         compute_alpha_trial_metrics(
             data,
