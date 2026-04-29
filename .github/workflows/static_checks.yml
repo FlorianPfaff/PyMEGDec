@@ -1,8 +1,7 @@
-name: Alpha signal visualization tests
+name: Static checks
 
 permissions:
   contents: read
-  checks: write
 
 on:
   push:
@@ -13,7 +12,7 @@ on:
       - main
 
 jobs:
-  test:
+  python:
     runs-on: ubuntu-latest
 
     steps:
@@ -29,11 +28,16 @@ jobs:
           pyproject.toml
           poetry.lock
 
-    - name: Install package
+    - name: Install package and static checkers
       run: |
         python -m pip install --upgrade pip
-        python -m pip install -e .
+        python -m pip install -e . mypy ruff
 
-    - name: Run tests
-      run: |
-        python -m unittest tests.test_alpha_signal_visualization.TestAlphaChannelMethods
+    - name: Run Ruff
+      run: python -m ruff check .
+
+    - name: Run mypy
+      run: python -m mypy src
+
+    - name: Compile Python files
+      run: python -m compileall src tests
