@@ -13,6 +13,7 @@ Makefile
 
 # Others
 *.bak
+.pymegdec-data-dir
 # No .C code in this library
 *.C
 *.h
