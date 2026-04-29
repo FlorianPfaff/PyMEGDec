@@ -9,6 +9,7 @@ conditions and cross-validation on a single dataset.
 src/pymegdec/              Package source code
   alpha_signal.py          Alpha-band filtering and phase extraction
   alpha_metrics.py         Per-trial alpha power and phase-gradient export
+  alpha_movement.py        Sensor-level alpha movement trajectory export
   alpha_visualization.py   Alpha signal and phase-shift plotting helpers
   reaction_time_analysis.py Alpha/RT join and association summaries
   classifiers.py           Classifier factories and PyTorch Lightning model
@@ -24,6 +25,7 @@ Top-level `cross_validation.py`, `evaluate_model_transfer.py`,
 `export_alpha_metrics.py` are compatibility wrappers for existing imports and
 direct script usage. `analyze_alpha_reaction_time.py` provides an exploratory
 analysis command for alpha metrics and behavioral reaction times.
+`analyze_alpha_movement.py` exports sensor-level alpha movement trajectories.
 
 ## Setup
 
@@ -124,6 +126,27 @@ The exported rows include alpha power, phase concentration, planar phase-fit
 quality, spatial phase frequency, estimated propagation speed, and dominant
 phase-gradient direction on a projected sensor plane. The `outputs/` directory
 is ignored by git.
+
+## Sensor-level alpha movement
+
+The MAT files contain CTF sensor geometry in `data.grad.chanpos`, with positions
+in millimeters. This supports sensor-array analyses of alpha topography, but not
+source-localized brain movement. The movement exporter therefore tracks a
+sensor-level proxy: for each trial and sampled time point, it filters the chosen
+MEG channels to the alpha band, computes alpha power, and writes the
+power-weighted centroid over the MEG sensor positions.
+
+By default it uses all MEG channels matching `^M`, the `8-12 Hz` alpha band, and
+a `-0.4` to `0.8 s` window around stimulus onset.
+
+```powershell
+python analyze_alpha_movement.py --participants 2 --trajectory-output outputs\part2_alpha_movement.csv --summary-output outputs\part2_alpha_movement_summary.csv
+```
+
+The trajectory CSV includes 3D CTF sensor centroids, projected 2D centroids,
+stepwise speed, displacement from the first sampled time point, the peak-power
+channel, and a spatial concentration score. Treat the trajectory as movement of
+the measured alpha topography over sensors, not as anatomical source motion.
 
 ## Alpha and reaction time
 
