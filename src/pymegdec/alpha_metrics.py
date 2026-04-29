@@ -177,7 +177,9 @@ def _resolve_channel_indices(data, channel_indices, config):
     return channel_indices
 
 
-def _alpha_window_and_phase(signal, time_vector, config):
+def compute_alpha_analytic_window(signal, time_vector, config):
+    """Return alpha-band analytic signal samples in ``config.time_window``."""
+
     sampling_rate = 1 / np.diff(time_vector[:2])[0]
     time_indices = np.flatnonzero(_time_mask(time_vector, config.time_window))
     low_freq, high_freq = config.frequency_range
@@ -192,6 +194,11 @@ def _alpha_window_and_phase(signal, time_vector, config):
     alpha_signal = scipy.signal.sosfiltfilt(sos, signal, axis=-1)
     analytic_signal = scipy.signal.hilbert(alpha_signal, axis=-1)
     alpha_window = np.take(analytic_signal, time_indices, axis=-1)
+    return alpha_window, time_indices
+
+
+def _alpha_window_and_phase(signal, time_vector, config):
+    alpha_window, _ = compute_alpha_analytic_window(signal, time_vector, config)
     return alpha_window, np.angle(alpha_window)
 
 
