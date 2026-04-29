@@ -57,8 +57,10 @@ class TestPreprocessing(unittest.TestCase):
         time = np.arange(0.0, 1.0, 0.01)[None, :]
         trial = np.vstack(
             [
-                np.sin(2 * np.pi * 5 * time.ravel()) + 0.5 * np.sin(2 * np.pi * 40 * time.ravel()),
-                np.cos(2 * np.pi * 5 * time.ravel()) + 0.5 * np.cos(2 * np.pi * 40 * time.ravel()),
+                np.sin(2 * np.pi * 5 * time.ravel())
+                + 0.5 * np.sin(2 * np.pi * 40 * time.ravel()),
+                np.cos(2 * np.pi * 5 * time.ravel())
+                + 0.5 * np.cos(2 * np.pi * 40 * time.ravel()),
             ]
         )
         data = _data([trial.copy(), 2 * trial.copy()], [time.copy(), time.copy()])

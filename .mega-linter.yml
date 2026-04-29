@@ -2,10 +2,10 @@ APPLY_FIXES: all
 
 PRE_COMMANDS:
   - command: cat /etc/os-release
-  - command: pip install $GITHUB_WORKSPACE/alpine-wheels/*
+  - command: pip install -e .
     venv: pylint
 
-PYTHON_PYLINT_CONFIG_FILE: LINTER_DEFAULT
+PYTHON_PYLINT_CONFIG_FILE: pyproject.toml
 
 DISABLE_LINTERS:
   - SPELL_CSPELL
@@ -17,4 +17,4 @@ DISABLE_LINTERS:
   - SPELL_LYCHEE # Takes pretty long
   - REPOSITORY_GRYPE # Throws false positives
 
-FILTER_REGEX_EXCLUDE: '(^\.github/workflows/|^src/pyrecest/_backend/)'
+FILTER_REGEX_EXCLUDE: '^\.github/workflows/'

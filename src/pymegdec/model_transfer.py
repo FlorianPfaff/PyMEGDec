@@ -1,11 +1,16 @@
-import numpy as np
-import scipy.io as sio
 import warnings
 
-from pymegdec.classifiers import get_default_classifier_param, train_multiclass_classifier
+import numpy as np
+import scipy.io as sio
+
+from pymegdec.classifiers import (
+    get_default_classifier_param,
+    train_multiclass_classifier,
+)
 from pymegdec.preprocessing import preprocess_features, reduce_features_pca
 
 
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals
 def evaluate_model_transfer(
     data_folder,
     parts,
@@ -33,13 +38,16 @@ def evaluate_model_transfer(
         labels_train_exp -= 1
         labels_val_exp -= 1
 
-    assert np.allclose(
-        np.diff(train_exp_data["time"][0][0][0][0, :2]),
-        np.diff(val_exp_data["time"][0][0][0][0, :2]),
-    ), "Sampling rate of the two experiments must match."
+    train_sample_interval = np.diff(train_exp_data["time"][0][0][0][0, :2])
+    val_sample_interval = np.diff(val_exp_data["time"][0][0][0][0, :2])
+    if not np.allclose(train_sample_interval, val_sample_interval):
+        raise ValueError("Sampling rate of the two experiments must match.")
 
     if not np.array_equal(np.unique(labels_train_exp), np.unique(labels_val_exp)):
-        warnings.warn("There are labels in the training or validation experiment that are not in the other experiment.")
+        warnings.warn(
+            "There are labels in the training or validation experiment "
+            "that are not in the other experiment."
+        )
 
     stimuli_features_train_exp, null_features_train_exp = preprocess_features(
         train_exp_data,
@@ -58,20 +66,33 @@ def evaluate_model_transfer(
         np.nan,
     )
 
-    features_train_exp = np.hstack(stimuli_features_train_exp + null_features_train_exp).T
-    labels_train_exp = np.concatenate((labels_train_exp, np.zeros(len(null_features_train_exp), dtype=int)))
+    features_train_exp = np.hstack(
+        stimuli_features_train_exp + null_features_train_exp
+    ).T
+    labels_train_exp = np.concatenate(
+        (labels_train_exp, np.zeros(len(null_features_train_exp), dtype=int))
+    )
 
     features_val_exp = np.hstack(stimuli_features_val_exp).T
 
     if components_pca != float("inf"):
-        features_train_exp, coeff, features_train_exp_mean, explained_variance = reduce_features_pca(
-            features_train_exp,
-            components_pca,
+        features_train_exp, coeff, features_train_exp_mean, explained_variance = (
+            reduce_features_pca(
+                features_train_exp,
+                components_pca,
+            )
         )
-        print(f"Explained Variance by {components_pca} components: {explained_variance:.2f}%")
-        features_val_exp = (features_val_exp - features_train_exp_mean) @ coeff[:, :components_pca]
+        print(
+            "Explained Variance by "
+            f"{components_pca} components: {explained_variance:.2f}%"
+        )
+        features_val_exp = (features_val_exp - features_train_exp_mean) @ coeff[
+            :, :components_pca
+        ]
 
-    model = train_multiclass_classifier(features_train_exp, labels_train_exp, classifier, classifier_param)
+    model = train_multiclass_classifier(
+        features_train_exp, labels_train_exp, classifier, classifier_param
+    )
     predictions_val_exp = model.predict(features_val_exp)
 
     accuracy = np.mean(predictions_val_exp == labels_val_exp)
@@ -79,5 +100,10 @@ def evaluate_model_transfer(
 
 
 if __name__ == "__main__":
-    acc = evaluate_model_transfer(r".", 2, classifier="multiclass-svm", components_pca=100)
+    acc = evaluate_model_transfer(
+        r".",
+        2,
+        classifier="multiclass-svm",
+        components_pca=100,
+    )
     print(acc)

@@ -1,6 +1,6 @@
 import os
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -9,56 +9,43 @@ from pymegdec.cross_validation import cross_validate_single_dataset
 
 class TestCrossValidateSingleDataset(unittest.TestCase):
     def setUp(self) -> None:
-        self.data_folder = r"."
-        self.participant_id = 2
-        data_file = Path(self.data_folder) / f"Part{self.participant_id}Data.mat"
+        data_folder = r"."
+        participant_id = 2
+        data_file = Path(data_folder) / f"Part{participant_id}Data.mat"
         if not data_file.exists():
             if os.getenv("CI"):
                 self.fail(f"Missing required test data file: {data_file}")
             self.skipTest(f"Missing required test data file: {data_file}")
 
-        self.n_folds = 10
-        self.window_size = 0.1
-        self.train_window_center = 0.2
-        self.null_window_center = -0.2
-        self.new_framerate = float("inf")
-        self.classifier = "multiclass-svm"
-        self.classifier_param = np.nan
-        self.components_pca = 200
-        self.frequency_range = (0, float("inf"))
+        self.params = {
+            "data_folder": data_folder,
+            "participant_id": participant_id,
+            "n_folds": 10,
+            "window_size": 0.1,
+            "train_window_center": 0.2,
+            "null_window_center": -0.2,
+            "new_framerate": float("inf"),
+            "classifier": "multiclass-svm",
+            "classifier_param": np.nan,
+            "components_pca": 200,
+            "frequency_range": (0, float("inf")),
+        }
+
+    def _accuracy(self, classifier):
+        return cross_validate_single_dataset(
+            **{
+                **self.params,
+                "classifier": classifier,
+            }
+        )
 
     def test_cross_validate_single_dataset_accuracy_svm(self):
-        accuracy = cross_validate_single_dataset(
-            self.data_folder,
-            self.participant_id,
-            self.n_folds,
-            self.window_size,
-            self.train_window_center,
-            self.null_window_center,
-            self.new_framerate,
-            self.classifier,
-            self.classifier_param,
-            self.components_pca,
-            self.frequency_range,
-        )
+        accuracy = self._accuracy("multiclass-svm")
 
         self.assertGreaterEqual(accuracy, 0.25, "Accuracy should be at least 0.25")
 
     def test_cross_validate_single_dataset_accuracy_scikit_mlp(self):
-        self.classifier = "scikit-mlp"
-        accuracy = cross_validate_single_dataset(
-            self.data_folder,
-            self.participant_id,
-            self.n_folds,
-            self.window_size,
-            self.train_window_center,
-            self.null_window_center,
-            self.new_framerate,
-            self.classifier,
-            self.classifier_param,
-            self.components_pca,
-            self.frequency_range,
-        )
+        accuracy = self._accuracy("scikit-mlp")
 
         self.assertGreaterEqual(accuracy, 0.15, "Accuracy should be at least 0.15")
 

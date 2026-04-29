@@ -1,6 +1,6 @@
 import os
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -17,7 +17,9 @@ class TestEvaluateModelTransfer(unittest.TestCase):
         ]
         missing_files = [path for path in required_files if not path.exists()]
         if missing_files:
-            message = "Missing required test data file(s): " + ", ".join(str(path) for path in missing_files)
+            message = "Missing required test data file(s): " + ", ".join(
+                str(path) for path in missing_files
+            )
             if os.getenv("CI"):
                 self.fail(message)
             self.skipTest(message)
