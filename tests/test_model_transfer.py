@@ -4,7 +4,10 @@ import numpy as np
 
 from pymegdec.classifiers import train_multiclass_classifier
 from pymegdec.data_config import resolve_data_folder
-from pymegdec.model_transfer import evaluate_model_transfer, get_original_feature_importance
+from pymegdec.model_transfer import (
+    evaluate_model_transfer,
+    get_original_feature_importance,
+)
 
 
 class TestLinearSvmFeatures(unittest.TestCase):
@@ -21,7 +24,9 @@ class TestLinearSvmFeatures(unittest.TestCase):
         class Model:
             coef_ = np.array([[2.0, 3.0]])
 
-        np.testing.assert_allclose(get_original_feature_importance(Model()), [[2.0, 3.0]])
+        np.testing.assert_allclose(
+            get_original_feature_importance(Model()), [[2.0, 3.0]]
+        )
 
     def test_original_feature_importance_maps_pca_space(self):
         class Model:
@@ -29,7 +34,9 @@ class TestLinearSvmFeatures(unittest.TestCase):
 
         pca_components = np.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
 
-        np.testing.assert_allclose(get_original_feature_importance(Model(), pca_components), [[2.0, 3.0, 0.0]])
+        np.testing.assert_allclose(
+            get_original_feature_importance(Model(), pca_components), [[2.0, 3.0, 0.0]]
+        )
 
     def test_original_feature_importance_uses_pipeline_scale(self):
         class Scaler:
@@ -41,7 +48,9 @@ class TestLinearSvmFeatures(unittest.TestCase):
         class Model:
             steps = [("standardscaler", Scaler()), ("svc", Classifier())]
 
-        np.testing.assert_allclose(get_original_feature_importance(Model()), [[1.0, 2.0]])
+        np.testing.assert_allclose(
+            get_original_feature_importance(Model()), [[1.0, 2.0]]
+        )
 
     def test_original_feature_importance_requires_coefficients(self):
         with self.assertRaises(ValueError):

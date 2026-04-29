@@ -10,7 +10,6 @@ import os
 from pathlib import Path
 from typing import Iterable
 
-
 DATA_DIR_ENV_VAR = "PYMEGDEC_DATA_DIR"
 LOCAL_DATA_DIR_FILE = ".pymegdec-data-dir"
 
@@ -36,7 +35,9 @@ def _read_local_data_dir_file() -> tuple[str, Path] | None:
     return None
 
 
-def _resolve_path(value: str | os.PathLike[str], *, relative_to: Path | None = None) -> Path:
+def _resolve_path(
+    value: str | os.PathLike[str], *, relative_to: Path | None = None
+) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute() and relative_to is not None:
         path = relative_to / path
@@ -79,10 +80,15 @@ def resolve_data_folder(
     missing_files = [name for name in required_files if not (path / name).exists()]
 
     if required and (not path.exists() or missing_files):
-        detail = f"Missing required data files: {', '.join(missing_files)}." if missing_files else "Data directory does not exist."
+        detail = (
+            f"Missing required data files: {', '.join(missing_files)}."
+            if missing_files
+            else "Data directory does not exist."
+        )
         raise FileNotFoundError(
-            f"{detail} Set {DATA_DIR_ENV_VAR}, pass data_folder, or create an ignored "
-            f"{LOCAL_DATA_DIR_FILE} file in the repository root. Resolved {source} to: {path}"
+            f"{detail} Set {DATA_DIR_ENV_VAR}, pass data_folder, or create "
+            f"an ignored {LOCAL_DATA_DIR_FILE} file in the repository root. "
+            f"Resolved {source} to: {path}"
         )
 
     return str(path)

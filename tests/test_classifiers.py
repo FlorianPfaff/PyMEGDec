@@ -1,12 +1,15 @@
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 import unittest
 from pathlib import Path
 
 import numpy as np
 
-from pymegdec.classifiers import get_default_classifier_param, train_multiclass_classifier
+from pymegdec.classifiers import (
+    get_default_classifier_param,
+    train_multiclass_classifier,
+)
 
 
 class TestClassifiers(unittest.TestCase):
@@ -37,7 +40,7 @@ class TestClassifiers(unittest.TestCase):
         env = os.environ.copy()
         src_path = str(Path(__file__).resolve().parents[1] / "src")
         env["PYTHONPATH"] = src_path + os.pathsep + env.get("PYTHONPATH", "")
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603
             [
                 sys.executable,
                 "-c",

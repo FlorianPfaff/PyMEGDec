@@ -53,15 +53,50 @@ def _parse_classifier_param(value: str | None):
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--data-dir", dest="data_folder", default=None, help="Directory containing Part*Data.mat files.")
-    parser.add_argument("--participant", type=int, default=2, help="Participant id to evaluate.")
-    parser.add_argument("--window-size", type=float, default=0.1, help="Window size in seconds.")
-    parser.add_argument("--train-window-center", type=float, default=0.2, help="Center of the stimulus training window.")
-    parser.add_argument("--null-window-center", type=_float_or_inf, default=-0.2, help="Center of the null window, or nan.")
-    parser.add_argument("--new-framerate", type=_float_or_inf, default=float("inf"), help="Target frame rate, or inf.")
-    parser.add_argument("--classifier", default="multiclass-svm", help="Classifier name.")
-    parser.add_argument("--classifier-param", default=None, help="Classifier parameter value, JSON, or Python literal.")
-    parser.add_argument("--components-pca", type=_int_or_inf, default=100, help="Number of PCA components, or inf.")
+    parser.add_argument(
+        "--data-dir",
+        dest="data_folder",
+        default=None,
+        help="Directory containing Part*Data.mat files.",
+    )
+    parser.add_argument(
+        "--participant", type=int, default=2, help="Participant id to evaluate."
+    )
+    parser.add_argument(
+        "--window-size", type=float, default=0.1, help="Window size in seconds."
+    )
+    parser.add_argument(
+        "--train-window-center",
+        type=float,
+        default=0.2,
+        help="Center of the stimulus training window.",
+    )
+    parser.add_argument(
+        "--null-window-center",
+        type=_float_or_inf,
+        default=-0.2,
+        help="Center of the null window, or nan.",
+    )
+    parser.add_argument(
+        "--new-framerate",
+        type=_float_or_inf,
+        default=float("inf"),
+        help="Target frame rate, or inf.",
+    )
+    parser.add_argument(
+        "--classifier", default="multiclass-svm", help="Classifier name."
+    )
+    parser.add_argument(
+        "--classifier-param",
+        default=None,
+        help="Classifier parameter value, JSON, or Python literal.",
+    )
+    parser.add_argument(
+        "--components-pca",
+        type=_int_or_inf,
+        default=100,
+        help="Number of PCA components, or inf.",
+    )
     parser.add_argument(
         "--frequency-range",
         type=_float_or_inf,
@@ -86,14 +121,20 @@ def _common_kwargs(args: argparse.Namespace) -> dict:
 
 
 def _build_cross_validate_parser(prog: str | None = None) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=prog, description="Cross-validate one participant dataset.")
+    parser = argparse.ArgumentParser(
+        prog=prog, description="Cross-validate one participant dataset."
+    )
     _add_common_args(parser)
-    parser.add_argument("--folds", type=int, default=10, help="Number of cross-validation folds.")
+    parser.add_argument(
+        "--folds", type=int, default=10, help="Number of cross-validation folds."
+    )
     return parser
 
 
 def _build_transfer_parser(prog: str | None = None) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=prog, description="Evaluate model transfer for one participant.")
+    parser = argparse.ArgumentParser(
+        prog=prog, description="Evaluate model transfer for one participant."
+    )
     _add_common_args(parser)
     return parser
 
@@ -128,7 +169,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         argv = sys.argv[1:]
 
     parser = argparse.ArgumentParser(description="PyMEGDec command-line interface.")
-    parser.add_argument("command", choices=["cross-validate", "transfer"], help="Workflow to run.")
+    parser.add_argument(
+        "command", choices=["cross-validate", "transfer"], help="Workflow to run."
+    )
 
     if not argv or argv[0] in {"-h", "--help"}:
         parser.print_help()
