@@ -1,9 +1,13 @@
 """Utilities for MEG decoding experiments."""
 
+from pymegdec.alpha_metrics import (
+    AlphaMetricConfig,
+    compute_alpha_metrics,
+    export_participant_alpha_metrics,
+)
 from pymegdec.alpha_signal import extract_phase, extract_time_basis
 from pymegdec.cross_validation import cross_validate_single_dataset
 from pymegdec.data_config import DATA_DIR_ENV_VAR, resolve_data_folder
-from pymegdec.alpha_metrics import AlphaMetricConfig, compute_alpha_metrics, export_participant_alpha_metrics
 from pymegdec.model_transfer import (
     evaluate_model_transfer,
     get_original_feature_importance,
