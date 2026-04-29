@@ -1,4 +1,4 @@
-"""Command-line entry points for PyMEGDec."""
+"""Command-line entry points and shared CLI helpers for PyMEGDec."""
 
 from __future__ import annotations
 
@@ -10,6 +10,12 @@ from typing import Sequence
 
 import numpy as np
 
+from .alpha_metrics import (
+    DEFAULT_FREQUENCY_RANGE,
+    DEFAULT_OCCIPITAL_PATTERN,
+    DEFAULT_TIME_WINDOW,
+    AlphaMetricConfig,
+)
 from .cross_validation import cross_validate_single_dataset
 from .model_transfer import evaluate_model_transfer
 
@@ -184,6 +190,45 @@ def main(argv: Sequence[str] | None = None) -> int:
         return transfer(remaining, prog="pymegdec transfer")
     parser.error(f"Unsupported command: {command}")
     return 2
+
+
+def parse_range(value: str) -> tuple[float, float]:
+    """Parse a comma-separated numeric range."""
+
+    lower, upper = value.split(",", maxsplit=1)
+    return float(lower), float(upper)
+
+
+def add_alpha_metric_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add alpha metric extraction options to an argument parser."""
+
+    parser.add_argument(
+        "--location-pattern",
+        default=DEFAULT_OCCIPITAL_PATTERN,
+        help="Regex for selecting channels by label.",
+    )
+    parser.add_argument(
+        "--time-window",
+        type=parse_range,
+        default=DEFAULT_TIME_WINDOW,
+        help="Time window as start,stop in seconds.",
+    )
+    parser.add_argument(
+        "--frequency-range",
+        type=parse_range,
+        default=DEFAULT_FREQUENCY_RANGE,
+        help="Frequency range as low,high in Hz.",
+    )
+
+
+def alpha_metric_config_from_args(args: argparse.Namespace) -> AlphaMetricConfig:
+    """Build alpha metric config from parsed command-line arguments."""
+
+    return AlphaMetricConfig(
+        location_pattern=args.location_pattern,
+        time_window=args.time_window,
+        frequency_range=args.frequency_range,
+    )
 
 
 if __name__ == "__main__":

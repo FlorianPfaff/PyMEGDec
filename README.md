@@ -10,6 +10,7 @@ src/pymegdec/              Package source code
   alpha_signal.py          Alpha-band filtering and phase extraction
   alpha_metrics.py         Per-trial alpha power and phase-gradient export
   alpha_visualization.py   Alpha signal and phase-shift plotting helpers
+  reaction_time_analysis.py Alpha/RT join and association summaries
   classifiers.py           Classifier factories and PyTorch Lightning model
   preprocessing.py         Filtering, downsampling, window extraction, PCA
   model_transfer.py        Train-on-experiment / validate-on-cue evaluation
@@ -21,7 +22,8 @@ tests/                     Unit and data-dependent unittest suites
 Top-level `cross_validation.py`, `evaluate_model_transfer.py`,
 `extract_alpha_signal.py`, `show_bandpass_signal_and_shifts.py`, and
 `export_alpha_metrics.py` are compatibility wrappers for existing imports and
-direct script usage.
+direct script usage. `analyze_alpha_reaction_time.py` provides an exploratory
+analysis command for alpha metrics and behavioral reaction times.
 
 ## Setup
 
@@ -122,3 +124,18 @@ The exported rows include alpha power, phase concentration, planar phase-fit
 quality, spatial phase frequency, estimated propagation speed, and dominant
 phase-gradient direction on a projected sensor plane. The `outputs/` directory
 is ignored by git.
+
+## Alpha and reaction time
+
+The saved MEG `Part*Data.mat` files may not contain reaction times. The RT
+analysis command therefore accepts an external behavioral CSV with
+`participant`, `trial`, and `reaction_time` columns. If reaction times are stored
+in a future MAT `trialinfo` column, pass `--trialinfo-rt-column` instead.
+
+```powershell
+python analyze_alpha_reaction_time.py --participants 2 --reaction-times behavior_rt.csv --joined-output outputs\part2_alpha_rt_trials.csv --summary-output outputs\part2_alpha_rt_summary.csv
+```
+
+The summary includes per-participant Pearson/regression rows and a pooled
+within-participant row for each alpha metric. Phase-gradient direction is encoded
+as sine and cosine components before analysis.
