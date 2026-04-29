@@ -28,6 +28,7 @@ _DEFAULT_CLASSIFIER_PARAMS = {
         "max_epochs": 500,
         "learning_rate": 1e-3,
         "dropout_rate": 0.2,
+        "random_seed": 0,
     },
 }
 
@@ -91,11 +92,29 @@ def train_multiclass_classifier(features, labels, classifier, classifier_param):
 
 
 def _train_pytorch_mlp(features, labels, classifier_param):
+    random_seed = classifier_param.get("random_seed")
+    if random_seed is not None:
+        random_seed = int(random_seed)
+        _seed_pytorch_training(random_seed)
+
     model = _build_pytorch_mlp(features, labels, classifier_param)
-    train_loader, val_loader = _build_pytorch_data_loaders(features, labels)
-    trainer = _build_pytorch_trainer(classifier_param)
+    train_loader, val_loader = _build_pytorch_data_loaders(
+        features, labels, random_seed=random_seed
+    )
+    trainer = _build_pytorch_trainer(classifier_param, random_seed=random_seed)
     trainer.fit(model, train_loader, val_loader)
     return model
+
+
+def _seed_pytorch_training(random_seed):
+    try:
+        import pytorch_lightning as pl
+    except ImportError as exc:
+        raise ImportError(
+            "Install PyMEGDec with the torch extra to use classifier='pytorch-mlp'."
+        ) from exc
+
+    pl.seed_everything(random_seed, workers=True)
 
 
 def _build_pytorch_mlp(features, labels, classifier_param):
@@ -115,29 +134,49 @@ def _build_pytorch_mlp(features, labels, classifier_param):
     )
 
 
-def _build_pytorch_data_loaders(features, labels):
+def _build_pytorch_data_loaders(features, labels, *, random_seed=None):
     try:
         import torch
-        from torch.utils.data import DataLoader, TensorDataset, random_split
     except ImportError as exc:
         raise ImportError(
             "Install PyMEGDec with the torch extra to use classifier='pytorch-mlp'."
         ) from exc
 
-    full_dataset = TensorDataset(
+    train_dataset, val_dataset = _split_pytorch_dataset(
+        torch, features, labels, random_seed
+    )
+    train_generator = _build_torch_generator(torch, random_seed)
+    return (
+        torch.utils.data.DataLoader(
+            train_dataset, batch_size=8, shuffle=True, generator=train_generator
+        ),
+        torch.utils.data.DataLoader(val_dataset, batch_size=8, shuffle=False),
+    )
+
+
+def _split_pytorch_dataset(torch, features, labels, random_seed):
+    full_dataset = torch.utils.data.TensorDataset(
         torch.tensor(features, dtype=torch.float32),
         torch.tensor(labels, dtype=torch.long),
     )
     train_size = int(0.8 * len(full_dataset))
     val_size = len(full_dataset) - train_size
-    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+    split_generator = _build_torch_generator(torch, random_seed)
+    return torch.utils.data.random_split(
+        full_dataset, [train_size, val_size], generator=split_generator
+    )
 
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
-    return train_loader, val_loader
+
+def _build_torch_generator(torch, random_seed):
+    if random_seed is None:
+        return None
+
+    generator = torch.Generator()
+    generator.manual_seed(int(random_seed))
+    return generator
 
 
-def _build_pytorch_trainer(classifier_param):
+def _build_pytorch_trainer(classifier_param, *, random_seed=None):
     try:
         import pytorch_lightning as pl
     except ImportError as exc:
@@ -149,6 +188,7 @@ def _build_pytorch_trainer(classifier_param):
         max_epochs=int(classifier_param["max_epochs"]),
         default_root_dir=r"lightning_logs",
         callbacks=[pl.callbacks.EarlyStopping(monitor="val_loss", patience=10)],
+        deterministic=random_seed is not None,
     )
 
 
