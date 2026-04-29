@@ -8,6 +8,7 @@ conditions and cross-validation on a single dataset.
 ```text
 src/pymegdec/              Package source code
   alpha_signal.py          Alpha-band filtering and phase extraction
+  alpha_metrics.py         Per-trial alpha power and phase-gradient export
   alpha_visualization.py   Alpha signal and phase-shift plotting helpers
   classifiers.py           Classifier factories and PyTorch Lightning model
   preprocessing.py         Filtering, downsampling, window extraction, PCA
@@ -18,8 +19,9 @@ tests/                     Unit and data-dependent unittest suites
 ```
 
 Top-level `cross_validation.py`, `evaluate_model_transfer.py`,
-`extract_alpha_signal.py`, and `show_bandpass_signal_and_shifts.py` are
-compatibility wrappers for existing imports and direct script usage.
+`extract_alpha_signal.py`, `show_bandpass_signal_and_shifts.py`, and
+`export_alpha_metrics.py` are compatibility wrappers for existing imports and
+direct script usage.
 
 ## Setup
 
@@ -79,3 +81,20 @@ can be `None`:
 transfer_accuracy = evaluate_model_transfer(None, 2, classifier="multiclass-svm")
 cv_accuracy = cross_validate_single_dataset(None, 2, classifier="multiclass-svm")
 ```
+
+## Exploratory alpha metrics
+
+Prestimulus alpha metrics can be exported per trial for downstream plotting or
+statistics. By default the exporter uses the `MLO*`, `MRO*`, and `MZO*`
+occipital CTF channels and the `-0.4` to `-0.05 s` window before stimulus
+onset.
+
+```powershell
+python export_alpha_metrics.py --participant 2 --output outputs\part2_alpha_metrics.csv
+python export_alpha_metrics.py --participant 2 --cue --output outputs\part2_cue_alpha_metrics.csv
+```
+
+The exported rows include alpha power, phase concentration, planar phase-fit
+quality, spatial phase frequency, estimated propagation speed, and dominant
+phase-gradient direction on a projected sensor plane. The `outputs/` directory
+is ignored by git.
