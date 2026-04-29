@@ -9,10 +9,10 @@ if _SRC.exists():
     sys.path.insert(0, str(_SRC))
 
 from pymegdec.alpha_metrics import (  # noqa: E402
-    AlphaMetricConfig,
     DEFAULT_FREQUENCY_RANGE,
     DEFAULT_OCCIPITAL_PATTERN,
     DEFAULT_TIME_WINDOW,
+    AlphaMetricConfig,
     export_participant_alpha_metrics,
 )
 
@@ -26,10 +26,18 @@ def main():
     parser = argparse.ArgumentParser(
         description="Export exploratory prestimulus alpha metrics to CSV."
     )
-    parser.add_argument("--data-dir", default=None, help="Directory containing Part*Data.mat files.")
-    parser.add_argument("--participant", type=int, required=True, help="Participant id to export.")
+    parser.add_argument(
+        "--data-dir", default=None, help="Directory containing Part*Data.mat files."
+    )
+    parser.add_argument(
+        "--participant", type=int, required=True, help="Participant id to export."
+    )
     parser.add_argument("--output", required=True, help="Output CSV path.")
-    parser.add_argument("--cue", action="store_true", help="Use Part*CueData.mat instead of Part*Data.mat.")
+    parser.add_argument(
+        "--cue",
+        action="store_true",
+        help="Use Part*CueData.mat instead of Part*Data.mat.",
+    )
     parser.add_argument(
         "--location-pattern",
         default=DEFAULT_OCCIPITAL_PATTERN,
