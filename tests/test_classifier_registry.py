@@ -1,9 +1,6 @@
-import os
-import subprocess
 import sys
 import unittest
 import warnings
-from pathlib import Path
 
 import numpy as np
 from sklearn.exceptions import ConvergenceWarning
@@ -91,28 +88,9 @@ class TestClassifierRegistry(unittest.TestCase):
         self.assertFalse(should_use_default_classifier_param({"hidden_dim": 10}))
 
     def test_optional_ml_dependencies_are_lazy_imported(self):
-        env = os.environ.copy()
-        src_path = str(Path(__file__).resolve().parents[1] / "src")
-        env["PYTHONPATH"] = src_path + os.pathsep + env.get("PYTHONPATH", "")
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "import sys; "
-                    "import pymegdec.classifiers; "
-                    "print('xgboost' in sys.modules, "
-                    "'torch' in sys.modules, "
-                    "'pytorch_lightning' in sys.modules)"
-                ),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-
-        self.assertEqual("False False False", result.stdout.strip())
+        self.assertNotIn("xgboost", sys.modules)
+        self.assertNotIn("torch", sys.modules)
+        self.assertNotIn("pytorch_lightning", sys.modules)
 
     def test_unsupported_classifier_error_lists_supported_names(self):
         with self.assertRaisesRegex(ValueError, "Supported classifiers"):

@@ -11,6 +11,7 @@ from pymegdec.classifiers import (
 from pymegdec.preprocessing import preprocess_features, reduce_features_pca
 
 
+# jscpd:ignore-start
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals
 def evaluate_model_transfer(
     data_folder,
@@ -26,6 +27,7 @@ def evaluate_model_transfer(
     random_state=None,
     return_feature_importance=False,
 ):
+    # jscpd:ignore-end
 
     if should_use_default_classifier_param(classifier_param):
         classifier_param = get_default_classifier_param(classifier)

@@ -160,7 +160,8 @@ def train_multiclass_classifier(
     except KeyError as exc:
         supported_classifiers = ", ".join(sorted(CLASSIFIER_REGISTRY))
         raise ValueError(
-            f"Unsupported classifier: {classifier}. Supported classifiers: {supported_classifiers}"
+            f"Unsupported classifier: {classifier}. "
+            f"Supported classifiers: {supported_classifiers}"
         ) from exc
 
     model = classifier_spec.builder(features, labels, classifier_param, random_state)
@@ -210,6 +211,7 @@ def _build_pytorch_mlp(features, labels, classifier_param):
 
 
 def _build_pytorch_data_loaders(features, labels, random_state=None):
+    # pylint: disable=too-many-locals
     try:
         import torch
         from torch.utils.data import DataLoader, TensorDataset, random_split
