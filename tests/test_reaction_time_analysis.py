@@ -4,7 +4,6 @@ import unittest
 from pathlib import Path
 
 import numpy as np
-
 from pymegdec.reaction_time_analysis import (
     ReactionTimeCsvConfig,
     ReactionTimeUnavailableError,
