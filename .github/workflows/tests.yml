@@ -1,0 +1,88 @@
+name: Python Tests
+
+permissions:
+  contents: read
+  checks: write
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Run fast tests
+        run: python -m unittest discover -v
+
+  integration:
+    runs-on: ubuntu-latest
+    env:
+      DOWNLOAD_URL: ${{ secrets.DOWNLOAD_URL }}
+      DOWNLOAD_URL_CUE: ${{ secrets.DOWNLOAD_URL_CUE }}
+      PYMEGDEC_DATA_DIR: data
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install package with optional ML dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[ml]"
+
+      - name: Check data secrets
+        id: data-secrets
+        run: |
+          if [ -n "$DOWNLOAD_URL" ] && [ -n "$DOWNLOAD_URL_CUE" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cache downloaded data
+        if: steps.data-secrets.outputs.available == 'true'
+        id: cache-data
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: ${{ runner.os }}-meg-data
+
+      - name: Download data
+        if: steps.data-secrets.outputs.available == 'true' && steps.cache-data.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p data
+          cd data
+          wget -q "$DOWNLOAD_URL"
+          wget -q "$DOWNLOAD_URL_CUE"
+
+      - name: Run MEG data integration tests
+        if: steps.data-secrets.outputs.available == 'true'
+        run: python -m unittest test_cross_validation test_evaluate_model_transfer
+
+      - name: Skip MEG data integration tests
+        if: steps.data-secrets.outputs.available != 'true'
+        run: echo "Skipping integration tests because DOWNLOAD_URL and DOWNLOAD_URL_CUE are not configured."

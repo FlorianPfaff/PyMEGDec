@@ -1,11 +1,18 @@
 import unittest
 import numpy as np
-from evaluate_model_transfer import evaluate_model_transfer
+from pymegdec.evaluate_model_transfer import evaluate_model_transfer
+from pymegdec.data_config import resolve_data_folder
 
 class TestEvaluateModelTransfer(unittest.TestCase):
     def setUp(self) -> None:
-        self.data_folder = r'.'
         self.parts = 2
+        try:
+            self.data_folder = resolve_data_folder(
+                required=True,
+                required_files=[f'Part{self.parts}Data.mat', f'Part{self.parts}CueData.mat'],
+            )
+        except FileNotFoundError as exc:
+            self.skipTest(str(exc))
         self.null_window_center = np.nan
 
     def test_evaluate_model_transfer_accuracy_svm(self):

@@ -1,11 +1,18 @@
 import unittest
 import numpy as np
-from cross_validation import cross_validate_single_dataset
+from pymegdec.cross_validation import cross_validate_single_dataset
+from pymegdec.data_config import resolve_data_folder
 
 class TestCrossValidateSingleDataset(unittest.TestCase):
     def setUp(self) -> None:
-        self.data_folder = r'.'
         self.participant_id = 2
+        try:
+            self.data_folder = resolve_data_folder(
+                required=True,
+                required_files=[f'Part{self.participant_id}Data.mat'],
+            )
+        except FileNotFoundError as exc:
+            self.skipTest(str(exc))
         self.n_folds = 10
         self.window_size = 0.1
         self.train_window_center = 0.2
