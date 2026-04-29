@@ -1,12 +1,10 @@
 """Export exploratory alpha metrics for one participant."""
 
 import argparse
-import sys
-from pathlib import Path
 
-_SRC = Path(__file__).resolve().parent / "src"
-if _SRC.exists():
-    sys.path.insert(0, str(_SRC))
+from script_bootstrap import add_src_to_path
+
+add_src_to_path(__file__)
 
 from pymegdec.alpha_metrics import (  # noqa: E402
     DEFAULT_FREQUENCY_RANGE,

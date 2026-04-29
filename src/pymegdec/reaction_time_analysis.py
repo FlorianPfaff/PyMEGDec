@@ -8,10 +8,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import scipy.io as sio
 from scipy import stats
 
-from pymegdec.alpha_metrics import AlphaMetricConfig, compute_alpha_metrics, load_participant_data
+from pymegdec.alpha_metrics import (
+    AlphaMetricConfig,
+    compute_alpha_metrics,
+    count_trials,
+    load_participant_data,
+    write_alpha_metrics_csv,
+)
 from pymegdec.alpha_signal import get_data_field
 from pymegdec.data_config import resolve_data_folder
 
@@ -95,15 +100,7 @@ def load_csv_rows(path):
 def write_csv_rows(rows, output_path):
     """Write dictionary rows to ``output_path``."""
 
-    if not rows:
-        raise ValueError("At least one row is required.")
-
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
+    write_alpha_metrics_csv(rows, output_path)
 
 
 def _clean_id(value):
@@ -146,7 +143,9 @@ def _column(fieldnames, explicit, candidates, *, required=True):
             return lookup[candidate.lower()]
 
     if required:
-        raise ValueError(f"CSV must contain one of these columns: {', '.join(candidates)}.")
+        raise ValueError(
+            f"CSV must contain one of these columns: {', '.join(candidates)}."
+        )
     return None
 
 
@@ -157,19 +156,42 @@ def load_reaction_time_csv(path, config=None):
     with Path(path).open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         fieldnames = reader.fieldnames or []
-        participant_column = _column(fieldnames, config.participant_column, ("participant", "participant_id", "part"), required=config.default_participant is None)
-        trial_column = _column(fieldnames, config.trial_column, ("trial", "trial_idx", "trial_index"))
-        rt_column = _column(fieldnames, config.reaction_time_column, REACTION_TIME_FIELD_CANDIDATES)
-        dataset_column = _column(fieldnames, config.dataset_column, ("dataset", "condition", "source"), required=False)
+        participant_column = _column(
+            fieldnames,
+            config.participant_column,
+            ("participant", "participant_id", "part"),
+            required=config.default_participant is None,
+        )
+        trial_column = _column(
+            fieldnames, config.trial_column, ("trial", "trial_idx", "trial_index")
+        )
+        rt_column = _column(
+            fieldnames, config.reaction_time_column, REACTION_TIME_FIELD_CANDIDATES
+        )
+        dataset_column = _column(
+            fieldnames,
+            config.dataset_column,
+            ("dataset", "condition", "source"),
+            required=False,
+        )
 
         rows = []
         for row in reader:
             rows.append(
                 {
-                    "participant": _clean_id(row[participant_column] if participant_column else config.default_participant),
-                    "dataset": row[dataset_column] if dataset_column else config.default_dataset,
+                    "participant": _clean_id(
+                        row[participant_column]
+                        if participant_column
+                        else config.default_participant
+                    ),
+                    "dataset": (
+                        row[dataset_column]
+                        if dataset_column
+                        else config.default_dataset
+                    ),
                     "trial": _to_int(row[trial_column]),
-                    "reaction_time": _to_float(row[rt_column]) * config.reaction_time_scale,
+                    "reaction_time": _to_float(row[rt_column])
+                    * config.reaction_time_scale,
                 }
             )
     return rows
@@ -185,23 +207,18 @@ def _has_field(data, field_name):
     return field_name in _data_field_names(data)
 
 
-def _n_trials(data):
-    trial_field = np.asarray(get_data_field(data, "trial"), dtype=object)
-    if trial_field.ndim == 2 and trial_field.shape[0] == 1:
-        return trial_field.shape[1]
-    return len(trial_field.ravel())
-
-
 def _trialinfo_matrix(data):
     trialinfo = np.asarray(get_data_field(data, "trialinfo"))
-    n_trials = _n_trials(data)
+    n_trials = count_trials(data)
     if trialinfo.ndim == 1:
         return trialinfo.reshape(-1, 1)
     if trialinfo.shape[0] == n_trials:
         return trialinfo
     if trialinfo.shape[1] == n_trials:
         return trialinfo.T
-    raise ValueError(f"Cannot align trialinfo shape {trialinfo.shape} to {n_trials} trials.")
+    raise ValueError(
+        f"Cannot align trialinfo shape {trialinfo.shape} to {n_trials} trials."
+    )
 
 
 def extract_reaction_times_from_data(
@@ -214,20 +231,29 @@ def extract_reaction_times_from_data(
 ):
     """Extract reaction times from MAT metadata when such a field is present."""
 
-    n_trials = _n_trials(data)
+    n_trials = count_trials(data)
     for field_name in REACTION_TIME_FIELD_CANDIDATES:
         if _has_field(data, field_name):
             values = np.asarray(get_data_field(data, field_name), dtype=float).ravel()
-            return _reaction_time_rows(values, n_trials, participant_id, dataset, reaction_time_scale)
+            return _reaction_time_rows(
+                values, n_trials, participant_id, dataset, reaction_time_scale
+            )
 
     if trialinfo_rt_column is not None:
         trialinfo = _trialinfo_matrix(data)
         if trialinfo_rt_column >= trialinfo.shape[1]:
             raise ValueError(f"trialinfo column {trialinfo_rt_column} does not exist.")
-        return _reaction_time_rows(trialinfo[:, trialinfo_rt_column], n_trials, participant_id, dataset, reaction_time_scale)
+        return _reaction_time_rows(
+            trialinfo[:, trialinfo_rt_column],
+            n_trials,
+            participant_id,
+            dataset,
+            reaction_time_scale,
+        )
 
     raise ReactionTimeUnavailableError(
-        "Reaction times were not found in the MAT data. Provide an external reaction-time CSV or pass a trialinfo RT column if one is present."
+        "Reaction times were not found in the MAT data. Provide an external "
+        "reaction-time CSV or pass a trialinfo RT column if one is present."
     )
 
 
@@ -245,7 +271,14 @@ def _reaction_time_rows(values, n_trials, participant_id, dataset, reaction_time
     ]
 
 
-def extract_reaction_times_for_participants(data_folder, participants, *, cue=False, trialinfo_rt_column=None, reaction_time_scale=1.0):
+def extract_reaction_times_for_participants(
+    data_folder,
+    participants,
+    *,
+    cue=False,
+    trialinfo_rt_column=None,
+    reaction_time_scale=1.0,
+):
     """Extract reaction times for participants from MAT data metadata."""
 
     rows = []
@@ -264,7 +297,9 @@ def extract_reaction_times_for_participants(data_folder, participants, *, cue=Fa
     return rows
 
 
-def compute_alpha_rows_for_participants(data_folder, participants, *, cue=False, config=None):
+def compute_alpha_rows_for_participants(
+    data_folder, participants, *, cue=False, config=None
+):
     """Compute alpha metrics for participants without writing intermediate files."""
 
     rows = []
@@ -272,17 +307,25 @@ def compute_alpha_rows_for_participants(data_folder, participants, *, cue=False,
     dataset = "cue" if cue else "main"
     for participant_id in participants:
         data = load_participant_data(data_folder, participant_id, cue=cue)
-        rows.extend(compute_alpha_metrics(data, participant_id=participant_id, dataset=dataset, config=config))
+        rows.extend(
+            compute_alpha_metrics(
+                data, participant_id=participant_id, dataset=dataset, config=config
+            )
+        )
     return rows
 
 
-def load_participant_alpha_rows(data_folder, participants, *, cue=False, alpha_metrics_path=None, config=None):
+def load_participant_alpha_rows(
+    data_folder, participants, *, cue=False, alpha_metrics_path=None, config=None
+):
     """Load precomputed alpha rows or compute them from participant MAT files."""
 
     if alpha_metrics_path:
         return load_csv_rows(alpha_metrics_path)
     data_folder = resolve_data_folder(data_folder)
-    return compute_alpha_rows_for_participants(data_folder, participants, cue=cue, config=config)
+    return compute_alpha_rows_for_participants(
+        data_folder, participants, cue=cue, config=config
+    )
 
 
 def load_participant_reaction_time_rows(
@@ -300,11 +343,21 @@ def load_participant_reaction_time_rows(
         return load_reaction_time_csv(reaction_times_path, csv_config)
     data_folder = resolve_data_folder(data_folder)
     scale = 1.0 if csv_config is None else csv_config.reaction_time_scale
-    return extract_reaction_times_for_participants(data_folder, participants, cue=cue, trialinfo_rt_column=trialinfo_rt_column, reaction_time_scale=scale)
+    return extract_reaction_times_for_participants(
+        data_folder,
+        participants,
+        cue=cue,
+        trialinfo_rt_column=trialinfo_rt_column,
+        reaction_time_scale=scale,
+    )
 
 
 def _join_key(row):
-    return (_clean_id(row.get("participant")), str(row.get("dataset", "main")), _to_int(row.get("trial")))
+    return (
+        _clean_id(row.get("participant")),
+        str(row.get("dataset", "main")),
+        _to_int(row.get("trial")),
+    )
 
 
 def join_alpha_reaction_times(alpha_rows, reaction_time_rows):
@@ -325,8 +378,12 @@ def join_alpha_reaction_times(alpha_rows, reaction_time_rows):
         joined_row = dict(alpha_row)
         joined_row["reaction_time"] = reaction_row["reaction_time"]
         direction = _to_float(joined_row.get("direction_rad"))
-        joined_row["direction_sin"] = math.sin(direction) if np.isfinite(direction) else np.nan
-        joined_row["direction_cos"] = math.cos(direction) if np.isfinite(direction) else np.nan
+        joined_row["direction_sin"] = (
+            math.sin(direction) if np.isfinite(direction) else np.nan
+        )
+        joined_row["direction_cos"] = (
+            math.cos(direction) if np.isfinite(direction) else np.nan
+        )
         joined_rows.append(joined_row)
 
     if not joined_rows:
@@ -336,7 +393,9 @@ def join_alpha_reaction_times(alpha_rows, reaction_time_rows):
 
 def _finite_metric_arrays(rows, metric):
     x_values = np.array([_to_float(row.get(metric)) for row in rows], dtype=float)
-    y_values = np.array([_to_float(row.get("reaction_time")) for row in rows], dtype=float)
+    y_values = np.array(
+        [_to_float(row.get("reaction_time")) for row in rows], dtype=float
+    )
     valid = np.isfinite(x_values) & np.isfinite(y_values)
     return x_values[valid], y_values[valid]
 
@@ -387,7 +446,13 @@ def _within_participant_centered_rows(grouped_rows, metric):
     for participant_rows in grouped_rows.values():
         x_values, y_values = _finite_metric_arrays(participant_rows, metric)
         for x_value, y_value in zip(x_values, y_values):
-            centered_rows.append({"participant": "", metric: x_value - np.mean(x_values), "reaction_time": y_value - np.mean(y_values)})
+            centered_rows.append(
+                {
+                    "participant": "",
+                    metric: x_value - np.mean(x_values),
+                    "reaction_time": y_value - np.mean(y_values),
+                }
+            )
     return centered_rows
 
 
@@ -398,13 +463,23 @@ def analyze_alpha_reaction_times(rows, metrics=DEFAULT_ALPHA_RT_METRICS, min_tri
     grouped_rows = _group_by_participant(rows)
     for metric in metrics:
         for participant, participant_rows in grouped_rows.items():
-            summary_rows.append(_association_row("participant", participant, metric, participant_rows, min_trials))
+            summary_rows.append(
+                _association_row(
+                    "participant", participant, metric, participant_rows, min_trials
+                )
+            )
         centered_rows = _within_participant_centered_rows(grouped_rows, metric)
-        summary_rows.append(_association_row("pooled_within_participant", "", metric, centered_rows, min_trials))
+        summary_rows.append(
+            _association_row(
+                "pooled_within_participant", "", metric, centered_rows, min_trials
+            )
+        )
     return summary_rows
 
 
-def write_alpha_reaction_time_plots(rows, output_dir, metrics=DEFAULT_ALPHA_RT_METRICS, min_trials=3):
+def write_alpha_reaction_time_plots(
+    rows, output_dir, metrics=DEFAULT_ALPHA_RT_METRICS, min_trials=3
+):
     """Write simple scatter plots for joined alpha/RT rows."""
 
     import matplotlib.pyplot as plt  # pylint: disable=import-outside-toplevel
@@ -436,7 +511,13 @@ def export_alpha_reaction_time_analysis(
     """Load alpha and RT data, write joined trial rows and summary associations."""
 
     config = config or AlphaReactionTimeExportConfig()
-    alpha_rows = load_participant_alpha_rows(data_folder, participants, cue=config.cue, alpha_metrics_path=config.alpha_metrics_path, config=config.alpha_config)
+    alpha_rows = load_participant_alpha_rows(
+        data_folder,
+        participants,
+        cue=config.cue,
+        alpha_metrics_path=config.alpha_metrics_path,
+        config=config.alpha_config,
+    )
     reaction_time_rows = load_participant_reaction_time_rows(
         data_folder,
         participants,
@@ -466,9 +547,3 @@ def available_participants(data_folder, *, cue=False):
         if participant.isdigit():
             participants.append(int(participant))
     return sorted(participants)
-
-
-def load_mat_data(path):
-    """Load a FieldTrip-like MAT data structure."""
-
-    return sio.loadmat(path)["data"][0]

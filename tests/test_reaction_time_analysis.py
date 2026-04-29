@@ -17,16 +17,12 @@ from pymegdec.reaction_time_analysis import (
 )
 
 
-def _cell_array(values):
-    inner = np.empty((1, len(values)), dtype=object)
-    for index, value in enumerate(values):
-        inner[0, index] = value
-    return inner
-
-
 def _synthetic_data(trialinfo):
+    trials = np.empty(3, dtype=object)
+    for index in range(3):
+        trials[index] = np.zeros((1, 2))
     return {
-        "trial": _cell_array([np.zeros((1, 2)), np.zeros((1, 2)), np.zeros((1, 2))]),
+        "trial": trials,
         "trialinfo": np.asarray(trialinfo),
     }
 
@@ -44,7 +40,9 @@ class TestReactionTimeAnalysis(unittest.TestCase):
             path = Path(temp_dir) / "rt.csv"
             write_csv_rows(rows, path)
 
-            loaded = load_reaction_time_csv(path, ReactionTimeCsvConfig(default_participant=2))
+            loaded = load_reaction_time_csv(
+                path, ReactionTimeCsvConfig(default_participant=2)
+            )
 
         self.assertEqual(loaded[0]["participant"], "2")
         self.assertEqual(loaded[0]["dataset"], "main")
@@ -59,11 +57,15 @@ class TestReactionTimeAnalysis(unittest.TestCase):
             ]
         )
 
-        rows = extract_reaction_times_from_data(data, participant_id=5, trialinfo_rt_column=1)
+        rows = extract_reaction_times_from_data(
+            data, participant_id=5, trialinfo_rt_column=1
+        )
 
         self.assertEqual([row["trial"] for row in rows], [0, 1, 2])
         self.assertEqual([row["participant"] for row in rows], ["5", "5", "5"])
-        np.testing.assert_allclose([row["reaction_time"] for row in rows], [0.41, 0.52, 0.63])
+        np.testing.assert_allclose(
+            [row["reaction_time"] for row in rows], [0.41, 0.52, 0.63]
+        )
 
     def test_extract_reaction_times_raises_when_absent(self):
         data = _synthetic_data([[1, 2, 3]])
@@ -73,8 +75,20 @@ class TestReactionTimeAnalysis(unittest.TestCase):
 
     def test_join_adds_direction_components(self):
         alpha_rows = [
-            {"participant": 2, "dataset": "main", "trial": 0, "log_alpha_power": 1.0, "direction_rad": 0.0},
-            {"participant": 2, "dataset": "main", "trial": 1, "log_alpha_power": 2.0, "direction_rad": np.pi / 2},
+            {
+                "participant": 2,
+                "dataset": "main",
+                "trial": 0,
+                "log_alpha_power": 1.0,
+                "direction_rad": 0.0,
+            },
+            {
+                "participant": 2,
+                "dataset": "main",
+                "trial": 1,
+                "log_alpha_power": 2.0,
+                "direction_rad": np.pi / 2,
+            },
         ]
         reaction_rows = [
             {"participant": 2, "dataset": "main", "trial": 0, "reaction_time": 0.4},
