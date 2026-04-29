@@ -9,7 +9,10 @@ from pymegdec.data_config import DATA_DIR_ENV_VAR, resolve_data_folder
 
 class TestResolveDataFolder(unittest.TestCase):
     def test_explicit_data_folder_takes_precedence(self):
-        with tempfile.TemporaryDirectory() as explicit_dir, tempfile.TemporaryDirectory() as env_dir:
+        with (
+            tempfile.TemporaryDirectory() as explicit_dir,
+            tempfile.TemporaryDirectory() as env_dir,
+        ):
             with patch.dict(os.environ, {DATA_DIR_ENV_VAR: env_dir}):
                 self.assertEqual(
                     resolve_data_folder(explicit_dir),
@@ -19,7 +22,9 @@ class TestResolveDataFolder(unittest.TestCase):
     def test_env_var_is_used_without_explicit_argument(self):
         with tempfile.TemporaryDirectory() as env_dir:
             with patch.dict(os.environ, {DATA_DIR_ENV_VAR: env_dir}):
-                with patch("pymegdec.data_config._read_local_data_dir_file", return_value=None):
+                with patch(
+                    "pymegdec.data_config._read_local_data_dir_file", return_value=None
+                ):
                     self.assertEqual(
                         resolve_data_folder(),
                         str(Path(env_dir).resolve()),
