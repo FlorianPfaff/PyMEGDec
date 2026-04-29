@@ -43,6 +43,7 @@ jobs:
       DOWNLOAD_URL: ${{ secrets.DOWNLOAD_URL }}
       DOWNLOAD_URL_CUE: ${{ secrets.DOWNLOAD_URL_CUE }}
       PYMEGDEC_DATA_DIR: data
+      PYMEGDEC_REQUIRE_DATA: "1"
 
     steps:
       - name: Checkout repository
