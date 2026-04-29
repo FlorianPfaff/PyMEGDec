@@ -154,11 +154,10 @@ def _build_pytorch_data_loaders(features, labels, classifier_param):
         full_dataset, [train_size, val_size], generator=generator
     )
 
-    train_loader = DataLoader(
-        train_dataset, batch_size=8, shuffle=True, generator=generator
+    return (
+        DataLoader(train_dataset, batch_size=8, shuffle=True, generator=generator),
+        DataLoader(val_dataset, batch_size=8, shuffle=False),
     )
-    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
-    return train_loader, val_loader
 
 
 def _build_pytorch_trainer(classifier_param):
