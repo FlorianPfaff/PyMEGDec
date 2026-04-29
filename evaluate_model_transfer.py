@@ -15,7 +15,10 @@ from pymegdec.classifiers import (  # noqa: E402
     get_default_classifier_param,
     train_multiclass_classifier,
 )
-from pymegdec.model_transfer import evaluate_model_transfer  # noqa: E402
+from pymegdec.model_transfer import (  # noqa: E402
+    evaluate_model_transfer,
+    get_original_feature_importance,
+)
 from pymegdec.preprocessing import (  # noqa: E402
     downsample_data,
     extract_windows,
@@ -31,6 +34,7 @@ __all__ = [
     "extract_windows",
     "filter_features",
     "get_default_classifier_param",
+    "get_original_feature_importance",
     "preprocess_features",
     "reduce_features_pca",
     "train_multiclass_classifier",

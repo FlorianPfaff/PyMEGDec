@@ -23,6 +23,7 @@ def evaluate_model_transfer(
     classifier_param=np.nan,
     components_pca=100,
     frequency_range=(0, float("inf")),
+    return_feature_importance=False,
 ):
 
     if not isinstance(classifier_param, dict) and np.all(np.isnan(classifier_param)):
@@ -77,6 +78,7 @@ def evaluate_model_transfer(
 
     features_val_exp = np.hstack(stimuli_features_val_exp).T
 
+    pca_components = None
     if components_pca != float("inf"):
         features_train_exp, coeff, features_train_exp_mean, explained_variance = (
             reduce_features_pca(
@@ -84,13 +86,12 @@ def evaluate_model_transfer(
                 components_pca,
             )
         )
+        pca_components = coeff[:, :components_pca]
+        features_val_exp = (features_val_exp - features_train_exp_mean) @ pca_components
         print(
             "Explained Variance by "
             f"{components_pca} components: {explained_variance:.2f}%"
         )
-        features_val_exp = (features_val_exp - features_train_exp_mean) @ coeff[
-            :, :components_pca
-        ]
 
     model = train_multiclass_classifier(
         features_train_exp, labels_train_exp, classifier, classifier_param
@@ -98,7 +99,37 @@ def evaluate_model_transfer(
     predictions_val_exp = model.predict(features_val_exp)
 
     accuracy = np.mean(predictions_val_exp == labels_val_exp)
+    if return_feature_importance:
+        return accuracy, get_original_feature_importance(model, pca_components)
+
     return accuracy
+
+
+def get_original_feature_importance(model, pca_components=None):
+    feature_importance = _get_classifier_coefficients(model)
+    if pca_components is not None:
+        pca_pseudoinverse = np.linalg.pinv(pca_components)
+        feature_importance = (pca_pseudoinverse.T @ feature_importance.T).T
+
+    return feature_importance
+
+
+def _get_classifier_coefficients(model):
+    if hasattr(model, "coef_"):
+        return model.coef_
+
+    if hasattr(model, "steps"):
+        classifier = model.steps[-1][1]
+        if hasattr(classifier, "coef_"):
+            coefficients = classifier.coef_
+            for _, transformer in model.steps[:-1]:
+                if hasattr(transformer, "scale_"):
+                    coefficients = coefficients / transformer.scale_
+            return coefficients
+
+    raise ValueError(
+        "Feature importance is only available for linear classifiers with coefficients."
+    )
 
 
 if __name__ == "__main__":
