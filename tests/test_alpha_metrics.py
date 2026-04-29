@@ -4,11 +4,10 @@ import unittest
 from pathlib import Path
 
 import numpy as np
-
 from pymegdec.alpha_metrics import (
     compute_alpha_metrics,
-    get_channel_positions,
     get_channel_names,
+    get_channel_positions,
     select_channels,
     write_alpha_metrics_csv,
 )
@@ -55,9 +54,13 @@ class TestAlphaMetrics(unittest.TestCase):
         self.data = _synthetic_data()
 
     def test_select_channels_defaults_to_occipital_ctf_labels(self):
-        self.assertEqual(get_channel_names(self.data), ["MLO11", "MRO11", "MZO01", "MLF11"])
+        self.assertEqual(
+            get_channel_names(self.data), ["MLO11", "MRO11", "MZO01", "MLF11"]
+        )
         self.assertEqual(select_channels(self.data), [0, 1, 2])
-        np.testing.assert_allclose(get_channel_positions(self.data), self.data["grad"]["chanpos"])
+        np.testing.assert_allclose(
+            get_channel_positions(self.data), self.data["grad"]["chanpos"]
+        )
 
     def test_get_channel_positions_from_matlab_struct_array(self):
         positions = self.data["grad"]["chanpos"]
