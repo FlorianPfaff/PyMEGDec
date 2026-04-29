@@ -6,11 +6,9 @@ from script_bootstrap import add_src_to_path
 
 add_src_to_path(__file__)
 
-from pymegdec.alpha_metrics import (  # noqa: E402
-    DEFAULT_FREQUENCY_RANGE,
-    DEFAULT_OCCIPITAL_PATTERN,
-    DEFAULT_TIME_WINDOW,
-    AlphaMetricConfig,
+from pymegdec.cli import (  # noqa: E402
+    add_alpha_metric_arguments,
+    alpha_metric_config_from_args,
 )
 from pymegdec.reaction_time_analysis import (  # noqa: E402
     DEFAULT_ALPHA_RT_METRICS,
@@ -21,11 +19,6 @@ from pymegdec.reaction_time_analysis import (  # noqa: E402
     parse_participant_spec,
     write_alpha_reaction_time_plots,
 )
-
-
-def _parse_range(value):
-    lower, upper = value.split(",", maxsplit=1)
-    return float(lower), float(upper)
 
 
 def _participants(value, data_dir, cue):
@@ -60,9 +53,7 @@ def main():
         help="Output CSV for matched trial-level alpha/RT rows.",
     )
     parser.add_argument(
-        "--summary-output",
-        required=True,
-        help="Output CSV for association summaries.",
+        "--summary-output", required=True, help="Output CSV for association summaries."
     )
     parser.add_argument(
         "--plots-dir",
@@ -104,33 +95,7 @@ def main():
         default=None,
         help="Reaction-time CSV dataset column override.",
     )
-    alpha_argument_specs = (
-        (
-            "--location-pattern",
-            {
-                "default": DEFAULT_OCCIPITAL_PATTERN,
-                "help": "Regex for selecting channels by label.",
-            },
-        ),
-        (
-            "--time-window",
-            {
-                "type": _parse_range,
-                "default": DEFAULT_TIME_WINDOW,
-                "help": "Time window as start,stop in seconds.",
-            },
-        ),
-        (
-            "--frequency-range",
-            {
-                "type": _parse_range,
-                "default": DEFAULT_FREQUENCY_RANGE,
-                "help": "Frequency range as low,high in Hz.",
-            },
-        ),
-    )
-    for name, kwargs in alpha_argument_specs:
-        parser.add_argument(name, **kwargs)
+    add_alpha_metric_arguments(parser)
     parser.add_argument(
         "--metrics",
         nargs="*",
@@ -146,11 +111,7 @@ def main():
             "directory with matching MAT files."
         )
     default_participant = participants[0] if len(participants) == 1 else None
-    alpha_config = AlphaMetricConfig(
-        location_pattern=args.location_pattern,
-        time_window=args.time_window,
-        frequency_range=args.frequency_range,
-    )
+    alpha_config = alpha_metric_config_from_args(args)
     csv_config = ReactionTimeCsvConfig(
         participant_column=args.participant_column,
         trial_column=args.trial_column,

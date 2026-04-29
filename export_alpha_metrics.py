@@ -6,18 +6,11 @@ from script_bootstrap import add_src_to_path
 
 add_src_to_path(__file__)
 
-from pymegdec.alpha_metrics import (  # noqa: E402
-    DEFAULT_FREQUENCY_RANGE,
-    DEFAULT_OCCIPITAL_PATTERN,
-    DEFAULT_TIME_WINDOW,
-    AlphaMetricConfig,
-    export_participant_alpha_metrics,
+from pymegdec.alpha_metrics import export_participant_alpha_metrics  # noqa: E402
+from pymegdec.cli import (  # noqa: E402
+    add_alpha_metric_arguments,
+    alpha_metric_config_from_args,
 )
-
-
-def _parse_range(value):
-    lower, upper = value.split(",", maxsplit=1)
-    return float(lower), float(upper)
 
 
 def main():
@@ -36,30 +29,10 @@ def main():
         action="store_true",
         help="Use Part*CueData.mat instead of Part*Data.mat.",
     )
-    parser.add_argument(
-        "--location-pattern",
-        default=DEFAULT_OCCIPITAL_PATTERN,
-        help="Regex for selecting channels by label.",
-    )
-    parser.add_argument(
-        "--time-window",
-        type=_parse_range,
-        default=DEFAULT_TIME_WINDOW,
-        help="Time window as start,stop in seconds.",
-    )
-    parser.add_argument(
-        "--frequency-range",
-        type=_parse_range,
-        default=DEFAULT_FREQUENCY_RANGE,
-        help="Frequency range as low,high in Hz.",
-    )
+    add_alpha_metric_arguments(parser)
     args = parser.parse_args()
 
-    config = AlphaMetricConfig(
-        location_pattern=args.location_pattern,
-        time_window=args.time_window,
-        frequency_range=args.frequency_range,
-    )
+    config = alpha_metric_config_from_args(args)
     rows = export_participant_alpha_metrics(
         args.data_dir,
         args.participant,
