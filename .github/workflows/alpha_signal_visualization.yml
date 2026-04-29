@@ -28,9 +28,8 @@ jobs:
     - name: Install package
       run: |
         python -m pip install --upgrade pip
-        python -m pip install "poetry>=2.0,<3.0"
-        poetry install --no-interaction
+        python -m pip install -e .
 
     - name: Run tests
       run: |
-        poetry run python -m unittest tests.test_alpha_signal_visualization.TestAlphaChannelMethods
+        python -m unittest tests.test_alpha_signal_visualization.TestAlphaChannelMethods
