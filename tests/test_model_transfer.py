@@ -1,6 +1,6 @@
 import os
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -15,8 +15,8 @@ class TestLinearSvmFeatures(unittest.TestCase):
 
         model = train_multiclass_classifier(features, labels, "multiclass-svm", 1.0)
 
-        self.assertEqual(model.kernel, "linear")
-        self.assertTrue(hasattr(model, "coef_"))
+        self.assertEqual(model[-1].kernel, "linear")
+        self.assertTrue(hasattr(model[-1], "coef_"))
 
     def test_original_feature_importance_without_pca(self):
         class Model:
@@ -31,6 +31,18 @@ class TestLinearSvmFeatures(unittest.TestCase):
         pca_components = np.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
 
         np.testing.assert_allclose(get_original_feature_importance(Model(), pca_components), [[2.0, 3.0, 0.0]])
+
+    def test_original_feature_importance_uses_pipeline_scale(self):
+        class Scaler:
+            scale_ = np.array([2.0, 4.0])
+
+        class Classifier:
+            coef_ = np.array([[2.0, 8.0]])
+
+        class Model:
+            steps = [("standardscaler", Scaler()), ("svc", Classifier())]
+
+        np.testing.assert_allclose(get_original_feature_importance(Model()), [[1.0, 2.0]])
 
     def test_original_feature_importance_requires_coefficients(self):
         with self.assertRaises(ValueError):
@@ -47,7 +59,9 @@ class TestEvaluateModelTransfer(unittest.TestCase):
         ]
         missing_files = [path for path in required_files if not path.exists()]
         if missing_files:
-            message = "Missing required test data file(s): " + ", ".join(str(path) for path in missing_files)
+            message = "Missing required test data file(s): " + ", ".join(
+                str(path) for path in missing_files
+            )
             if os.getenv("CI"):
                 self.fail(message)
             self.skipTest(message)
@@ -61,6 +75,7 @@ class TestEvaluateModelTransfer(unittest.TestCase):
             self.parts,
             null_window_center=self.null_window_center,
             classifier=classifier,
+            components_pca=200,
         )
 
         self.assertGreaterEqual(accuracy, 0.25, "Accuracy should be at least 0.25")

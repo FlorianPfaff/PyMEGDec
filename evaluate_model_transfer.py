@@ -1,15 +1,25 @@
 """Backward-compatible wrapper for :mod:`pymegdec.model_transfer`."""
 
-from pathlib import Path
 import sys
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 _SRC = Path(__file__).resolve().parent / "src"
 if _SRC.exists():
     sys.path.insert(0, str(_SRC))
 
-from pymegdec.classifiers import get_default_classifier_param, train_multiclass_classifier
-from pymegdec.model_transfer import evaluate_model_transfer, get_original_feature_importance
-from pymegdec.preprocessing import (
+if TYPE_CHECKING:
+    from pymegdec.classifiers import MLPClassifierTorch
+
+from pymegdec.classifiers import (  # noqa: E402
+    get_default_classifier_param,
+    train_multiclass_classifier,
+)
+from pymegdec.model_transfer import (  # noqa: E402
+    evaluate_model_transfer,
+    get_original_feature_importance,
+)
+from pymegdec.preprocessing import (  # noqa: E402
     downsample_data,
     extract_windows,
     filter_features,
@@ -33,6 +43,7 @@ __all__ = [
 
 def __getattr__(name):
     if name == "MLPClassifierTorch":
+        # pylint: disable-next=no-name-in-module
         from pymegdec.classifiers import MLPClassifierTorch
 
         return MLPClassifierTorch
@@ -40,5 +51,7 @@ def __getattr__(name):
 
 
 if __name__ == "__main__":
-    acc = evaluate_model_transfer(r".", 2, classifier="multiclass-svm", components_pca=100)
+    acc = evaluate_model_transfer(
+        r".", 2, classifier="multiclass-svm", components_pca=100
+    )
     print(acc)

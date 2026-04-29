@@ -2,25 +2,37 @@
 
 import numpy as np
 from scipy.interpolate import interp1d
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, detrend, filtfilt
 from sklearn.decomposition import PCA
 
 
-def preprocess_features(data, frequency_range, new_framerate, window_size, train_window_center, null_window_center):
+def preprocess_features(
+    data,
+    frequency_range,
+    new_framerate,
+    window_size,
+    train_window_center,
+    null_window_center,
+):
     data = filter_features(data, frequency_range[0], frequency_range[1])
     if new_framerate != float("inf"):
         data = downsample_data(data, new_framerate)
 
-    train_window = (train_window_center - window_size / 2, train_window_center + window_size / 2)
+    train_window = (
+        train_window_center - window_size / 2,
+        train_window_center + window_size / 2,
+    )
     null_time_window = (
         (null_window_center - window_size / 2, null_window_center + window_size / 2)
         if not np.isnan(null_window_center)
         else (np.nan, np.nan)
     )
-    assert np.isnan(null_time_window).all() or null_time_window[1] <= train_window[0], (
-        "Null window must be before train window"
+    if not np.isnan(null_time_window).all() and null_time_window[1] > train_window[0]:
+        raise ValueError("Null window must be before train window")
+
+    stimuli_features_cell, null_features_cell = extract_windows(
+        data, train_window, null_time_window
     )
-    stimuli_features_cell, null_features_cell = extract_windows(data, train_window, null_time_window)
     return stimuli_features_cell, null_features_cell
 
 
@@ -30,9 +42,14 @@ def filter_features(data, low_freq, high_freq):
 
     sample_rate = float(1 / np.diff(data["time"][0][0][0][0, :2])[0])
 
-    assert low_freq >= 0, "Low frequency must be greater than or equal to 0"
-    assert high_freq >= 0, "High frequency must be greater than or equal to 0"
-    assert high_freq >= low_freq, "High frequency must be greater than or equal to low frequency"
+    if low_freq < 0:
+        raise ValueError("Low frequency must be greater than or equal to 0")
+    if high_freq < 0:
+        raise ValueError("High frequency must be greater than or equal to 0")
+    if high_freq < low_freq:
+        raise ValueError(
+            "High frequency must be greater than or equal to low frequency"
+        )
 
     if low_freq == 0 and high_freq == float("inf"):
         return data
@@ -44,16 +61,19 @@ def filter_features(data, low_freq, high_freq):
     else:
         raise ValueError("Highpass filter not supported.")
 
-    for i in range(len(data["trial"][0])):
-        data["trial"][0][i] = filtfilt(b, a, data["trial"][0][i].T).T
+    for i in range(len(data["trial"][0][0])):
+        data["trial"][0][0][i] = filtfilt(b, a, data["trial"][0][0][i].T, axis=0).T
     return data
 
 
 def downsample_data(data, new_framerate):
-    raw_fs = float(1 / np.diff(data["time"][0][0][0][0, :2])[0])
+    raw_fs = round(float(1 / np.median(np.diff(data["time"][0][0][0][0]))))
     if new_framerate != raw_fs:
-        new_t = np.arange(data["time"][0][0][0][0, 0], data["time"][0][0][0][0, -1], 1 / new_framerate)
+        first_time = data["time"][0][0][0][0]
+        step = 1 / new_framerate
+        new_t = np.arange(first_time[0], first_time[-1] + step / 2, step)
         for i in range(len(data["trial"][0][0])):
+            data["trial"][0][0][i] = detrend(data["trial"][0][0][i], axis=1)
             interpolator = interp1d(
                 data["time"][0][0][i][0, :],
                 data["trial"][0][0][i],
@@ -66,19 +86,24 @@ def downsample_data(data, new_framerate):
 
 
 def extract_windows(data, train_window, null_time_window):
-    train_begin_index = np.argmin(np.abs(data["time"][0][0][0] - train_window[0]))
-    train_end_index = np.argmin(np.abs(data["time"][0][0][0] - train_window[1]))
+    time = data["time"][0][0][0]
+    train_begin_index = np.argmin(np.abs(time - train_window[0]))
+    train_end_index = np.argmin(np.abs(time - train_window[1]))
     stimuli_features_cell = [
-        trial[:, train_begin_index:train_end_index].reshape(-1, 1) for trial in data["trial"][0][0]
+        trial[:, train_begin_index : train_end_index + 1].reshape(-1, 1, order="F")
+        for trial in data["trial"][0][0]
     ]
 
     if np.isnan(null_time_window).all():
         null_features_cell = []
+    elif null_time_window[1] > 0:
+        raise ValueError("Null window should not contain positive time points")
     elif null_time_window[1] - null_time_window[0] >= 0:
-        null_begin_index = np.argmin(np.abs(data["time"][0][0][0] - null_time_window[0]))
+        null_begin_index = np.argmin(np.abs(time - null_time_window[0]))
         null_end_index = null_begin_index + (train_end_index - train_begin_index)
         null_features_cell = [
-            trial[:, null_begin_index:null_end_index].reshape(-1, 1) for trial in data["trial"][0][0]
+            trial[:, null_begin_index : null_end_index + 1].reshape(-1, 1, order="F")
+            for trial in data["trial"][0][0]
         ]
     else:
         raise ValueError("Invalid null window")
@@ -87,9 +112,15 @@ def extract_windows(data, train_window, null_time_window):
 
 
 def reduce_features_pca(features, n_components):
+    n_components = min(n_components, features.shape[0], features.shape[1])
     pca = PCA(n_components=n_components)
     features_train_exp_mean = np.mean(features, axis=0)
     features_centered = features - features_train_exp_mean
     reduced_features = pca.fit_transform(features_centered)
     explained_variance = np.sum(pca.explained_variance_ratio_) * 100
-    return reduced_features, pca.components_.T, features_train_exp_mean, explained_variance
+    return (
+        reduced_features,
+        pca.components_.T,
+        features_train_exp_mean,
+        explained_variance,
+    )

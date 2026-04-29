@@ -7,16 +7,19 @@ conditions and cross-validation on a single dataset.
 
 ```text
 src/pymegdec/              Package source code
+  alpha_signal.py          Alpha-band filtering and phase extraction
+  alpha_visualization.py   Alpha signal and phase-shift plotting helpers
   classifiers.py           Classifier factories and PyTorch Lightning model
   preprocessing.py         Filtering, downsampling, window extraction, PCA
   model_transfer.py        Train-on-experiment / validate-on-cue evaluation
   cross_validation.py      Single-dataset cross-validation routine
-tests/                     Data-dependent unittest suites
-.github/workflows/         CI jobs for the data-dependent test subsets
+tests/                     Unit and data-dependent unittest suites
+.github/workflows/         CI jobs for unit and data-dependent test subsets
 ```
 
-Top-level `cross_validation.py` and `evaluate_model_transfer.py` are compatibility
-wrappers for existing imports and direct script usage.
+Top-level `cross_validation.py`, `evaluate_model_transfer.py`,
+`extract_alpha_signal.py`, and `show_bandpass_signal_and_shifts.py` are
+compatibility wrappers for existing imports and direct script usage.
 
 ## Setup
 
