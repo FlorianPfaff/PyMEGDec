@@ -31,7 +31,8 @@ jobs:
     - name: Install package
       run: |
         python -m pip install --upgrade pip
-        python -m pip install -e ".[dev]"
+        python -m pip install "poetry>=2.0,<3.0"
+        poetry install --extras dev --no-interaction
 
     - name: Cache downloaded data
       id: cache-data
@@ -55,9 +56,9 @@ jobs:
     - name: Run tests
       run: |
         if [ "${{ matrix.classifier }}" == "multiclass-svm" ]; then
-          python -m unittest tests.test_cross_validation.TestCrossValidateSingleDataset.test_cross_validate_single_dataset_accuracy_svm
+          poetry run python -m unittest tests.test_cross_validation.TestCrossValidateSingleDataset.test_cross_validate_single_dataset_accuracy_svm
         elif [ "${{ matrix.classifier }}" == "scikit-mlp" ]; then
-          python -m unittest tests.test_cross_validation.TestCrossValidateSingleDataset.test_cross_validate_single_dataset_accuracy_scikit_mlp
+          poetry run python -m unittest tests.test_cross_validation.TestCrossValidateSingleDataset.test_cross_validate_single_dataset_accuracy_scikit_mlp
         else
           echo "Invalid classifier"
           exit 1
