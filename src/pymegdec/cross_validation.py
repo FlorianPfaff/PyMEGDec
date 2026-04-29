@@ -8,6 +8,7 @@ from pymegdec.classifiers import (
     train_gradient_boosting,
     train_multiclass_classifier,
 )
+from pymegdec.data_config import resolve_data_folder
 from pymegdec.preprocessing import preprocess_features, reduce_features_pca
 
 
@@ -29,6 +30,8 @@ def cross_validate_single_dataset(
 
     if np.isnan(classifier_param):
         classifier_param = get_default_classifier_param(classifier)
+
+    data_folder = resolve_data_folder(data_folder)
 
     data = sio.loadmat(f"{data_folder}/Part{participant_id}Data.mat")["data"][0]
     labels = data["trialinfo"][0][0]

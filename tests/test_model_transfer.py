@@ -1,10 +1,10 @@
 import os
 import unittest
-from pathlib import Path
 
 import numpy as np
 
 from pymegdec.classifiers import train_multiclass_classifier
+from pymegdec.data_config import resolve_data_folder
 from pymegdec.model_transfer import evaluate_model_transfer, get_original_feature_importance
 
 
@@ -51,20 +51,19 @@ class TestLinearSvmFeatures(unittest.TestCase):
 
 class TestEvaluateModelTransfer(unittest.TestCase):
     def setUp(self) -> None:
-        self.data_folder = r"."
         self.parts = 2
-        required_files = [
-            Path(self.data_folder) / f"Part{self.parts}Data.mat",
-            Path(self.data_folder) / f"Part{self.parts}CueData.mat",
-        ]
-        missing_files = [path for path in required_files if not path.exists()]
-        if missing_files:
-            message = "Missing required test data file(s): " + ", ".join(
-                str(path) for path in missing_files
+        try:
+            self.data_folder = resolve_data_folder(
+                required=True,
+                required_files=[
+                    f"Part{self.parts}Data.mat",
+                    f"Part{self.parts}CueData.mat",
+                ],
             )
+        except FileNotFoundError as exc:
             if os.getenv("CI"):
-                self.fail(message)
-            self.skipTest(message)
+                self.fail(str(exc))
+            self.skipTest(str(exc))
 
         self.null_window_center = np.nan
 
