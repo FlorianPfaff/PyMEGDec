@@ -30,12 +30,8 @@ class TestMLPClassifierTorch(unittest.TestCase):
         features = np.arange(40).reshape(20, 2)
         labels = np.arange(20)
 
-        first_loaders = _build_pytorch_data_loaders(
-            features, labels, random_seed=123
-        )
-        second_loaders = _build_pytorch_data_loaders(
-            features, labels, random_seed=123
-        )
+        first_loaders = _build_pytorch_data_loaders(features, labels, random_seed=123)
+        second_loaders = _build_pytorch_data_loaders(features, labels, random_seed=123)
 
         self.assertEqual(
             self._labels_by_loader(first_loaders),
@@ -44,8 +40,7 @@ class TestMLPClassifierTorch(unittest.TestCase):
 
     def _labels_by_loader(self, loaders):
         return [
-            [batch_labels.tolist() for _, batch_labels in loader]
-            for loader in loaders
+            [batch_labels.tolist() for _, batch_labels in loader] for loader in loaders
         ]
 
 
