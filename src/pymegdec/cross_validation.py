@@ -2,6 +2,7 @@ import numpy as np
 import scipy.io as sio
 from pymegdec.classifiers import (
     get_default_classifier_param,
+    should_use_default_classifier_param,
     train_binary_svm,
     train_for_stimulus_lasso_glm,
     train_gradient_boosting,
@@ -25,9 +26,10 @@ def cross_validate_single_dataset(
     classifier_param=np.nan,
     components_pca=100,
     frequency_range=(0, float("inf")),
+    random_state=None,
 ):
 
-    if np.isnan(classifier_param):
+    if should_use_default_classifier_param(classifier_param):
         classifier_param = get_default_classifier_param(classifier)
 
     data_folder = resolve_data_folder(data_folder)
@@ -85,15 +87,24 @@ def cross_validate_single_dataset(
             for stim in range(1, n_stim + 1):
                 if classifier == "gradient-boosting":
                     model = train_gradient_boosting(
-                        train_features, train_labels == stim, classifier_param
+                        train_features,
+                        train_labels == stim,
+                        classifier_param,
+                        random_state=random_state,
                     )
                 elif classifier == "lasso":
                     model = train_for_stimulus_lasso_glm(
-                        train_features, train_labels == stim, classifier_param
+                        train_features,
+                        train_labels == stim,
+                        classifier_param,
+                        random_state=random_state,
                     )
                 elif classifier == "svm-binary":
                     model = train_binary_svm(
-                        train_features, train_labels == stim, classifier_param
+                        train_features,
+                        train_labels == stim,
+                        classifier_param,
+                        random_state=random_state,
                     )
                 if classifier in ["lasso", "svm-binary"]:
                     all_pred[:, stim - 1] = _positive_class_score(model, test_features)
@@ -102,7 +113,11 @@ def cross_validate_single_dataset(
             pred_lbl[fold == f] = np.argmax(all_pred, axis=1) + 1
         else:
             model = train_multiclass_classifier(
-                train_features, train_labels, classifier, classifier_param
+                train_features,
+                train_labels,
+                classifier,
+                classifier_param,
+                random_state=random_state,
             )
             pred_lbl[fold == f] = model.predict(test_features)
 

@@ -27,7 +27,8 @@ class TestLinearSvmFeatures(unittest.TestCase):
             coef_ = np.array([[2.0, 3.0]])
 
         np.testing.assert_allclose(
-            get_original_feature_importance(Model()), [[2.0, 3.0]]
+            get_original_feature_importance(Model()),
+            [[2.0, 3.0]],
         )
 
     def test_original_feature_importance_maps_pca_space(self):
@@ -37,7 +38,8 @@ class TestLinearSvmFeatures(unittest.TestCase):
         pca_components = np.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
 
         np.testing.assert_allclose(
-            get_original_feature_importance(Model(), pca_components), [[2.0, 3.0, 0.0]]
+            get_original_feature_importance(Model(), pca_components),
+            [[2.0, 3.0, 0.0]],
         )
 
     def test_original_feature_importance_uses_pipeline_scale(self):
@@ -51,7 +53,8 @@ class TestLinearSvmFeatures(unittest.TestCase):
             steps = [("standardscaler", Scaler()), ("svc", Classifier())]
 
         np.testing.assert_allclose(
-            get_original_feature_importance(Model()), [[1.0, 2.0]]
+            get_original_feature_importance(Model()),
+            [[1.0, 2.0]],
         )
 
     def test_original_feature_importance_requires_coefficients(self):

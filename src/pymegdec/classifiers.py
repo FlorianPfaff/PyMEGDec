@@ -1,5 +1,8 @@
 """Classifier factories and wrappers used by the decoding routines."""
 
+from dataclasses import dataclass
+from typing import Callable
+
 import numpy as np
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
@@ -33,6 +36,12 @@ _DEFAULT_CLASSIFIER_PARAMS = {
 }
 
 
+@dataclass(frozen=True)
+class ClassifierSpec:
+    builder: Callable
+    fits_in_builder: bool = False
+
+
 def __getattr__(name):
     if name == "MLPClassifierTorch":
         from pymegdec.torch_models import MLPClassifierTorch
@@ -41,60 +50,131 @@ def __getattr__(name):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def train_multiclass_classifier(features, labels, classifier, classifier_param):
-    if classifier == "multiclass-svm":
-        model = make_pipeline(
-            StandardScaler(), SVC(C=classifier_param, kernel="linear")
-        )
-    elif classifier == "multiclass-svm-weighted":
-        model = make_pipeline(
-            StandardScaler(),
-            SVC(C=classifier_param, kernel="linear", class_weight="balanced"),
-        )
-    elif classifier == "random-forest":
-        model = RandomForestClassifier(
-            n_estimators=int(classifier_param), min_samples_leaf=5
-        )
-    elif classifier == "gradient-boosting":
-        model = GradientBoostingClassifier(n_estimators=int(classifier_param))
-    elif classifier == "knn":
-        model = KNeighborsClassifier(n_neighbors=int(classifier_param))
-    elif classifier == "mostFrequentDummy":
-        model = DummyClassifier(strategy="most_frequent")
-    elif classifier == "always1Dummy":
-        model = DummyClassifier(strategy="constant", constant=1)
-    elif classifier == "xgboost":
-        try:
-            import xgboost as xgb
-        except ImportError as exc:
-            raise ImportError(
-                "Install PyMEGDec with the xgboost extra to use classifier='xgboost'."
-            ) from exc
+def should_use_default_classifier_param(classifier_param):
+    try:
+        return np.all(np.isnan(classifier_param))
+    except TypeError:
+        return False
 
-        model = xgb.XGBClassifier(
-            n_estimators=int(classifier_param),
-            use_label_encoder=False,
-            eval_metric="mlogloss",
-        )
-    elif classifier == "scikit-mlp":
-        model = MLPClassifier(
-            hidden_layer_sizes=int(classifier_param[0]),
-            max_iter=int(classifier_param[1]),
-        )
-    elif classifier == "pytorch-mlp":
-        model = _train_pytorch_mlp(features, labels, classifier_param)
+
+def _build_multiclass_svm(_features, _labels, classifier_param, random_state):
+    return make_pipeline(
+        StandardScaler(),
+        SVC(C=classifier_param, kernel="linear", random_state=random_state),
+    )
+
+
+def _build_multiclass_svm_weighted(_features, _labels, classifier_param, random_state):
+    return make_pipeline(
+        StandardScaler(),
+        SVC(
+            C=classifier_param,
+            kernel="linear",
+            class_weight="balanced",
+            random_state=random_state,
+        ),
+    )
+
+
+def _build_random_forest(_features, _labels, classifier_param, random_state):
+    return RandomForestClassifier(
+        n_estimators=int(classifier_param),
+        min_samples_leaf=5,
+        random_state=random_state,
+    )
+
+
+def _build_gradient_boosting(_features, _labels, classifier_param, random_state):
+    return GradientBoostingClassifier(
+        n_estimators=int(classifier_param),
+        random_state=random_state,
+    )
+
+
+def _build_knn(_features, _labels, classifier_param, _random_state):
+    return KNeighborsClassifier(n_neighbors=int(classifier_param))
+
+
+def _build_most_frequent_dummy(_features, _labels, _classifier_param, _random_state):
+    return DummyClassifier(strategy="most_frequent")
+
+
+def _build_always_one_dummy(_features, _labels, _classifier_param, _random_state):
+    return DummyClassifier(strategy="constant", constant=1)
+
+
+def _build_xgboost(_features, _labels, classifier_param, random_state):
+    try:
+        import xgboost as xgb
+    except ImportError as exc:
+        raise ImportError(
+            "Install PyMEGDec with the xgboost extra to use classifier='xgboost'."
+        ) from exc
+
+    return xgb.XGBClassifier(
+        n_estimators=int(classifier_param),
+        eval_metric="mlogloss",
+        random_state=random_state,
+    )
+
+
+def _build_scikit_mlp(_features, _labels, classifier_param, random_state):
+    return MLPClassifier(
+        hidden_layer_sizes=int(classifier_param[0]),
+        max_iter=int(classifier_param[1]),
+        random_state=random_state,
+    )
+
+
+def _build_pytorch_mlp_classifier(features, labels, classifier_param, random_state):
+    return _train_pytorch_mlp(
+        features,
+        labels,
+        classifier_param,
+        random_state=random_state,
+    )
+
+
+CLASSIFIER_REGISTRY = {
+    "multiclass-svm": ClassifierSpec(_build_multiclass_svm),
+    "multiclass-svm-weighted": ClassifierSpec(_build_multiclass_svm_weighted),
+    "random-forest": ClassifierSpec(_build_random_forest),
+    "gradient-boosting": ClassifierSpec(_build_gradient_boosting),
+    "knn": ClassifierSpec(_build_knn),
+    "mostFrequentDummy": ClassifierSpec(_build_most_frequent_dummy),
+    "always1Dummy": ClassifierSpec(_build_always_one_dummy),
+    "xgboost": ClassifierSpec(_build_xgboost),
+    "scikit-mlp": ClassifierSpec(_build_scikit_mlp),
+    "pytorch-mlp": ClassifierSpec(_build_pytorch_mlp_classifier, fits_in_builder=True),
+}
+
+
+def train_multiclass_classifier(
+    features,
+    labels,
+    classifier,
+    classifier_param,
+    random_state=None,
+):
+    try:
+        classifier_spec = CLASSIFIER_REGISTRY[classifier]
+    except KeyError as exc:
+        supported_classifiers = ", ".join(sorted(CLASSIFIER_REGISTRY))
+        raise ValueError(
+            f"Unsupported classifier: {classifier}. "
+            f"Supported classifiers: {supported_classifiers}"
+        ) from exc
+
+    model = classifier_spec.builder(features, labels, classifier_param, random_state)
+    if classifier_spec.fits_in_builder:
         return model
-    else:
-        raise ValueError(f"Unsupported classifier: {classifier}")
-
     model.fit(features, labels)
     return model
 
 
-def _train_pytorch_mlp(features, labels, classifier_param):
-    random_seed = classifier_param.get("random_seed")
+def _train_pytorch_mlp(features, labels, classifier_param, random_state=None):
+    random_seed = _resolve_pytorch_random_seed(classifier_param, random_state)
     if random_seed is not None:
-        random_seed = int(random_seed)
         _seed_pytorch_training(random_seed)
 
     model = _build_pytorch_mlp(features, labels, classifier_param)
@@ -104,6 +184,15 @@ def _train_pytorch_mlp(features, labels, classifier_param):
     trainer = _build_pytorch_trainer(classifier_param, random_seed=random_seed)
     trainer.fit(model, train_loader, val_loader)
     return model
+
+
+def _resolve_pytorch_random_seed(classifier_param, random_state):
+    random_seed = random_state
+    if random_seed is None:
+        random_seed = classifier_param.get("random_seed")
+    if random_seed is None:
+        return None
+    return int(random_seed)
 
 
 def _seed_pytorch_training(random_seed):
@@ -192,27 +281,52 @@ def _build_pytorch_trainer(classifier_param, *, random_seed=None):
     )
 
 
-def train_gradient_boosting(train_features, train_labels, classifier_param):
+def train_gradient_boosting(
+    train_features,
+    train_labels,
+    classifier_param,
+    random_state=None,
+):
     model = GradientBoostingClassifier(
-        n_estimators=int(classifier_param), max_leaf_nodes=21, learning_rate=0.1
+        n_estimators=int(classifier_param),
+        max_leaf_nodes=21,
+        learning_rate=0.1,
+        random_state=random_state,
     )
     model.fit(train_features, train_labels)
     return model
 
 
-def train_for_stimulus_lasso_glm(train_features, train_labels, lambda_):
+def train_for_stimulus_lasso_glm(
+    train_features,
+    train_labels,
+    lambda_,
+    random_state=None,
+):
     model = make_pipeline(
         StandardScaler(),
         LogisticRegression(
-            penalty="l1", C=1 / lambda_, solver="liblinear", max_iter=1000
+            penalty="l1",
+            C=1 / lambda_,
+            solver="liblinear",
+            max_iter=1000,
+            random_state=random_state,
         ),
     )
     model.fit(train_features, train_labels)
     return model
 
 
-def train_binary_svm(train_features, train_labels, box_constraint):
-    model = make_pipeline(StandardScaler(), SVC(C=box_constraint, kernel="linear"))
+def train_binary_svm(
+    train_features,
+    train_labels,
+    box_constraint,
+    random_state=None,
+):
+    model = make_pipeline(
+        StandardScaler(),
+        SVC(C=box_constraint, kernel="linear", random_state=random_state),
+    )
     model.fit(train_features, train_labels)
     return model
 
