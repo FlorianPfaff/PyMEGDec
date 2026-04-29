@@ -5,21 +5,13 @@ import numpy as np
 from pymegdec.classifiers import get_default_classifier_param
 from pymegdec.preprocessing import downsample_data, extract_windows, filter_features
 
-
-def _cell_array(values):
-    inner = np.empty((1, len(values)), dtype=object)
-    for index, value in enumerate(values):
-        inner[0, index] = value
-
-    outer = np.empty((1,), dtype=object)
-    outer[0] = inner
-    return outer
+from tests.matlab_fixtures import cell_array
 
 
 def _data(trials, times):
     return {
-        "trial": _cell_array(trials),
-        "time": _cell_array(times),
+        "trial": cell_array(trials),
+        "time": cell_array(times),
     }
 
 

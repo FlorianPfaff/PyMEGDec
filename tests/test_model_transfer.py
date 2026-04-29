@@ -7,22 +7,14 @@ import numpy as np
 
 from pymegdec.model_transfer import evaluate_model_transfer
 
-
-def _cell_array(values):
-    inner = np.empty((1, len(values)), dtype=object)
-    for index, value in enumerate(values):
-        inner[0, index] = value
-
-    outer = np.empty((1,), dtype=object)
-    outer[0] = inner
-    return outer
+from tests.matlab_fixtures import cell_array
 
 
 def _mat_data_with_time(time):
     trialinfo = np.empty((1, 1), dtype=object)
     trialinfo[0, 0] = np.array([1, 2])
     return {
-        "time": _cell_array([np.array([time])]),
+        "time": cell_array([np.array([time])]),
         "trialinfo": trialinfo,
     }
 

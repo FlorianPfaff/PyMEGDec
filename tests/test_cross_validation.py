@@ -7,22 +7,14 @@ import numpy as np
 
 from pymegdec.cross_validation import cross_validate_single_dataset
 
-
-def _cell_array(values):
-    inner = np.empty((1, len(values)), dtype=object)
-    for index, value in enumerate(values):
-        inner[0, index] = value
-
-    outer = np.empty((1,), dtype=object)
-    outer[0] = inner
-    return outer
+from tests.matlab_fixtures import cell_array
 
 
 def _mat_data(labels):
     trialinfo = np.empty((1, 1), dtype=object)
     trialinfo[0, 0] = labels
     return {
-        "trial": _cell_array([np.zeros((1, 2)) for _ in labels]),
+        "trial": cell_array([np.zeros((1, 2)) for _ in labels]),
         "trialinfo": trialinfo,
     }
 
