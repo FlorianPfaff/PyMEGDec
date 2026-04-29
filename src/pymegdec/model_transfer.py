@@ -7,6 +7,7 @@ from pymegdec.classifiers import (
     get_default_classifier_param,
     train_multiclass_classifier,
 )
+from pymegdec.data_config import resolve_data_folder
 from pymegdec.preprocessing import preprocess_features, reduce_features_pca
 
 
@@ -27,6 +28,8 @@ def evaluate_model_transfer(
 
     if not isinstance(classifier_param, dict) and np.all(np.isnan(classifier_param)):
         classifier_param = get_default_classifier_param(classifier)
+
+    data_folder = resolve_data_folder(data_folder)
 
     train_exp_data = sio.loadmat(f"{data_folder}/Part{parts}Data.mat")["data"][0]
     val_exp_data = sio.loadmat(f"{data_folder}/Part{parts}CueData.mat")["data"][0]

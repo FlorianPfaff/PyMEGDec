@@ -34,9 +34,33 @@ Install optional classifier backends when needed:
 python -m pip install -e ".[all]"
 ```
 
-The test suite expects MATLAB data files named like `Part2Data.mat` and
-`Part2CueData.mat` in the working directory. CI downloads these files from
-repository secrets before running the tests.
+## Data directory
+
+The data directory is configured at runtime so private or machine-specific paths
+do not need to be committed. Data files are expected to be named like
+`Part2Data.mat` and `Part2CueData.mat`.
+
+Resolution order:
+
+1. Pass a data directory to the Python API or command-line wrapper.
+2. Set the `PYMEGDEC_DATA_DIR` environment variable.
+3. Create a local `.pymegdec-data-dir` file containing one path. This file is
+   ignored by git.
+4. Fall back to the current working directory for backwards compatibility.
+
+On PowerShell:
+
+```powershell
+$env:PYMEGDEC_DATA_DIR = "C:\path\to\data"
+python -m unittest
+```
+
+Or pass the directory explicitly:
+
+```powershell
+python cross_validation.py --data-dir "C:\path\to\data" --participant 2
+python evaluate_model_transfer.py --data-dir "C:\path\to\data" --participant 2
+```
 
 ## Examples
 
@@ -46,4 +70,12 @@ from pymegdec.cross_validation import cross_validate_single_dataset
 
 transfer_accuracy = evaluate_model_transfer(".", 2, classifier="multiclass-svm")
 cv_accuracy = cross_validate_single_dataset(".", 2, classifier="multiclass-svm")
+```
+
+If `PYMEGDEC_DATA_DIR` or `.pymegdec-data-dir` is configured, the first argument
+can be `None`:
+
+```python
+transfer_accuracy = evaluate_model_transfer(None, 2, classifier="multiclass-svm")
+cv_accuracy = cross_validate_single_dataset(None, 2, classifier="multiclass-svm")
 ```

@@ -57,9 +57,7 @@ jobs:
         wget -q ${{ secrets.DOWNLOAD_URL }}
         cd ..
 
-    - name: Copy Data to Current Working Directory
-      run: |
-        for file in data/*; do ln -s "$file" .; done
-
     - name: Run tests
+      env:
+        PYMEGDEC_DATA_DIR: data
       run: python -m unittest ${{ matrix.test-target }}
