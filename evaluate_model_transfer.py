@@ -1,26 +1,24 @@
-import pytorch_lightning as pl
-from torch.utils.data import DataLoader, TensorDataset, random_split
-from torch import optim
-import torch.nn as nn
+from dataclasses import dataclass
+from typing import Callable
+
 import numpy as np
 import scipy.io as sio
 from scipy.signal import butter, filtfilt
 from scipy.interpolate import interp1d
 from sklearn.decomposition import PCA
-import torch
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.dummy import DummyClassifier
 from sklearn.neural_network import MLPClassifier
 import warnings
-import xgboost as xgb
 
 def evaluate_model_transfer(data_folder, parts, window_size=0.1, train_window_center=0.2, 
                             null_window_center=-0.2, new_framerate=float('inf'), classifier='multiclass-svm', 
-                            classifier_param=np.nan, components_pca=100, frequency_range=(0, float('inf'))):
+                            classifier_param=np.nan, components_pca=100, frequency_range=(0, float('inf')),
+                            random_state=None):
 
-    if not isinstance(classifier_param, dict) and np.all(np.isnan(classifier_param)):
+    if should_use_default_classifier_param(classifier_param):
         classifier_param = get_default_classifier_param(classifier)
     
     train_exp_data = sio.loadmat(f'{data_folder}/Part{parts}Data.mat')['data'][0]
@@ -55,11 +53,24 @@ def evaluate_model_transfer(data_folder, parts, window_size=0.1, train_window_ce
         print(f'Explained Variance by {components_pca} components: {explained_variance:.2f}%')
         features_val_exp = (features_val_exp - features_train_exp_mean) @ coeff[:, :components_pca]
     
-    model = train_multiclass_classifier(features_train_exp, labels_train_exp, classifier, classifier_param)
+    model = train_multiclass_classifier(
+        features_train_exp,
+        labels_train_exp,
+        classifier,
+        classifier_param,
+        random_state=random_state,
+    )
     predictions_val_exp = model.predict(features_val_exp)
 
     accuracy = np.mean(predictions_val_exp == labels_val_exp)
     return accuracy
+
+
+def should_use_default_classifier_param(classifier_param):
+    try:
+        return np.all(np.isnan(classifier_param))
+    except TypeError:
+        return False
 
 def preprocess_features(data, frequency_range, new_framerate, window_size, train_window_center, null_window_center):
     data = filter_features(data, frequency_range[0], frequency_range[1])
@@ -133,63 +144,86 @@ def reduce_features_pca(features, n_components):
     return reduced_features, pca.components_.T, features_train_exp_mean, explained_variance
 
 
-def train_multiclass_classifier(features, labels, classifier, classifier_param):
-    if classifier == 'multiclass-svm':
-        model = SVC(C=classifier_param, probability=True)
-    elif classifier == 'random-forest':
-        model = RandomForestClassifier(n_estimators=int(classifier_param))
-    elif classifier == 'gradient-boosting':
-        model = GradientBoostingClassifier(n_estimators=int(classifier_param))
-    elif classifier == 'knn':
-        model = KNeighborsClassifier(n_neighbors=int(classifier_param))
-    elif classifier == 'mostFrequentDummy':
-        model = DummyClassifier(strategy='most_frequent')
-    elif classifier == 'always1Dummy':
-        model = DummyClassifier(strategy='constant', constant=1)
-    elif classifier == 'xgboost':
-        model = xgb.XGBClassifier(n_estimators=int(classifier_param), use_label_encoder=False, eval_metric='mlogloss')
-    elif classifier == 'scikit-mlp':
-        model = MLPClassifier(hidden_layer_sizes=int(classifier_param[0]), max_iter=int(classifier_param[1]))
-    elif classifier == 'pytorch-mlp':
-        # Define model dimensions
-        input_dim = features.shape[1]
-        output_dim = len(np.unique(labels))
+@dataclass(frozen=True)
+class ClassifierSpec:
+    builder: Callable
+    fits_in_builder: bool = False
 
-        # Instantiate the model
-        model = MLPClassifierTorch(input_dim, int(classifier_param["hidden_dim"]),
-                                   output_dim, learning_rate=classifier_param["learning_rate"],
-                                   dropout_rate=classifier_param["dropout_rate"])
 
-        # Create the full dataset
-        full_dataset = TensorDataset(torch.tensor(features, dtype=torch.float32), 
-                                    torch.tensor(labels, dtype=torch.long))
+def _build_multiclass_svm(features, labels, classifier_param, random_state):
+    return SVC(C=classifier_param, probability=True, random_state=random_state)
 
-        # Define the size of training and validation datasets
-        train_size = int(0.8 * len(full_dataset))
-        val_size = len(full_dataset) - train_size
 
-        # Split the dataset into training and validation sets
-        train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+def _build_random_forest(features, labels, classifier_param, random_state):
+    return RandomForestClassifier(n_estimators=int(classifier_param), random_state=random_state)
 
-        # Create data loaders for training and validation sets
-        train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
 
-        # Configure the trainer to use the GPU
+def _build_gradient_boosting(features, labels, classifier_param, random_state):
+    return GradientBoostingClassifier(n_estimators=int(classifier_param), random_state=random_state)
 
-        trainer = pl.Trainer(
-            max_epochs=int(classifier_param["max_epochs"]),
-            default_root_dir=r"lightning_logs",
-            callbacks=[pl.callbacks.EarlyStopping(monitor='val_loss', patience=10)]
-        )
-       
-        # Train the model
-        trainer.fit(model, train_loader, val_loader)
-        return model
-    else:
-        raise ValueError(f"Unsupported classifier: {classifier}")
-    
-    model.fit(features, labels)
+
+def _build_knn(features, labels, classifier_param, random_state):
+    return KNeighborsClassifier(n_neighbors=int(classifier_param))
+
+
+def _build_most_frequent_dummy(features, labels, classifier_param, random_state):
+    return DummyClassifier(strategy='most_frequent')
+
+
+def _build_always_one_dummy(features, labels, classifier_param, random_state):
+    return DummyClassifier(strategy='constant', constant=1)
+
+
+def _build_xgboost(features, labels, classifier_param, random_state):
+    try:
+        import xgboost as xgb
+    except ImportError as exc:
+        raise ImportError("Install xgboost to use classifier='xgboost'.") from exc
+
+    return xgb.XGBClassifier(
+        n_estimators=int(classifier_param),
+        eval_metric='mlogloss',
+        random_state=random_state,
+    )
+
+
+def _build_scikit_mlp(features, labels, classifier_param, random_state):
+    return MLPClassifier(
+        hidden_layer_sizes=int(classifier_param[0]),
+        max_iter=int(classifier_param[1]),
+        random_state=random_state,
+    )
+
+
+def _build_pytorch_mlp(features, labels, classifier_param, random_state):
+    return train_pytorch_mlp(features, labels, classifier_param, random_state=random_state)
+
+
+CLASSIFIER_REGISTRY = {
+    'multiclass-svm': ClassifierSpec(_build_multiclass_svm),
+    'random-forest': ClassifierSpec(_build_random_forest),
+    'gradient-boosting': ClassifierSpec(_build_gradient_boosting),
+    'knn': ClassifierSpec(_build_knn),
+    'mostFrequentDummy': ClassifierSpec(_build_most_frequent_dummy),
+    'always1Dummy': ClassifierSpec(_build_always_one_dummy),
+    'xgboost': ClassifierSpec(_build_xgboost),
+    'scikit-mlp': ClassifierSpec(_build_scikit_mlp),
+    'pytorch-mlp': ClassifierSpec(_build_pytorch_mlp, fits_in_builder=True),
+}
+
+
+def train_multiclass_classifier(features, labels, classifier, classifier_param, random_state=None):
+    try:
+        classifier_spec = CLASSIFIER_REGISTRY[classifier]
+    except KeyError as exc:
+        supported_classifiers = ', '.join(sorted(CLASSIFIER_REGISTRY))
+        raise ValueError(
+            f"Unsupported classifier: {classifier}. Supported classifiers: {supported_classifiers}"
+        ) from exc
+
+    model = classifier_spec.builder(features, labels, classifier_param, random_state)
+    if not classifier_spec.fits_in_builder:
+        model.fit(features, labels)
     return model
 
 
@@ -214,51 +248,94 @@ def get_default_classifier_param(classifier):
         raise ValueError(f"Unsupported classifier: {classifier}")
 
 
-class MLPClassifierTorch(pl.LightningModule):
-    def __init__(self, input_dim, hidden_dim, output_dim, learning_rate=1e-3, dropout_rate=0.2):
-        super(MLPClassifierTorch, self).__init__()
-        self.layer_1 = nn.Linear(input_dim, hidden_dim)
-        self.layer_2 = nn.Linear(hidden_dim, hidden_dim)
-        self.layer_3 = nn.Linear(hidden_dim, output_dim)
-        self.learning_rate = learning_rate
-        self.dropout = nn.Dropout(dropout_rate)
-        self.relu = nn.ReLU()       
-        self.criterion = nn.CrossEntropyLoss()
+def train_pytorch_mlp(features, labels, classifier_param, random_state=None):
+    try:
+        import pytorch_lightning as pl
+        import torch
+        import torch.nn as nn
+        from torch import optim
+        from torch.utils.data import DataLoader, TensorDataset, random_split
+    except ImportError as exc:
+        raise ImportError("Install torch and pytorch-lightning to use classifier='pytorch-mlp'.") from exc
 
-    def forward(self, x):
-        x = self.relu(self.layer_1(x))
-        x = self.dropout(x)
-        x = self.relu(self.layer_2(x))
-        x = self.dropout(x)
-        x = self.layer_3(x)
-        return x
-    
-    def predict(self, x):
-        x = torch.tensor(x, dtype=torch.float32)
-        self.eval()  # Set the model to evaluation mode
-        with torch.no_grad():  # Disable gradient computation
-            predictions = self.relu(self.layer_1(x))
-            predictions = self.relu(self.layer_2(predictions))
-            predictions = self.layer_3(predictions)
-        return torch.argmax(predictions, dim=1).numpy()
+    if random_state is not None:
+        pl.seed_everything(random_state, workers=True)
 
-    def training_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self.forward(x)
-        loss = self.criterion(y_hat, y)
-        self.log('train_loss', loss)
-        return loss
+    class MLPClassifierTorch(pl.LightningModule):
+        def __init__(self, input_dim, hidden_dim, output_dim, learning_rate=1e-3, dropout_rate=0.2):
+            super().__init__()
+            self.layer_1 = nn.Linear(input_dim, hidden_dim)
+            self.layer_2 = nn.Linear(hidden_dim, hidden_dim)
+            self.layer_3 = nn.Linear(hidden_dim, output_dim)
+            self.learning_rate = learning_rate
+            self.dropout = nn.Dropout(dropout_rate)
+            self.relu = nn.ReLU()
+            self.criterion = nn.CrossEntropyLoss()
 
-    def validation_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self.forward(x)
-        loss = self.criterion(y_hat, y)
-        self.log('val_loss', loss)
-        return loss
+        def forward(self, x):
+            x = self.relu(self.layer_1(x))
+            x = self.dropout(x)
+            x = self.relu(self.layer_2(x))
+            x = self.dropout(x)
+            x = self.layer_3(x)
+            return x
 
-    def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=1e-3, weight_decay=1e-4)
-        return optimizer
+        def predict(self, x):
+            x = torch.tensor(x, dtype=torch.float32)
+            self.eval()
+            with torch.no_grad():
+                predictions = self.relu(self.layer_1(x))
+                predictions = self.relu(self.layer_2(predictions))
+                predictions = self.layer_3(predictions)
+            return torch.argmax(predictions, dim=1).numpy()
+
+        def training_step(self, batch, batch_idx):
+            x, y = batch
+            y_hat = self.forward(x)
+            loss = self.criterion(y_hat, y)
+            self.log('train_loss', loss)
+            return loss
+
+        def validation_step(self, batch, batch_idx):
+            x, y = batch
+            y_hat = self.forward(x)
+            loss = self.criterion(y_hat, y)
+            self.log('val_loss', loss)
+            return loss
+
+        def configure_optimizers(self):
+            return optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=1e-4)
+
+    input_dim = features.shape[1]
+    output_dim = len(np.unique(labels))
+    model = MLPClassifierTorch(
+        input_dim,
+        int(classifier_param["hidden_dim"]),
+        output_dim,
+        learning_rate=classifier_param["learning_rate"],
+        dropout_rate=classifier_param["dropout_rate"],
+    )
+
+    full_dataset = TensorDataset(
+        torch.tensor(features, dtype=torch.float32),
+        torch.tensor(labels, dtype=torch.long),
+    )
+    train_size = int(0.8 * len(full_dataset))
+    val_size = len(full_dataset) - train_size
+    generator = None
+    if random_state is not None:
+        generator = torch.Generator().manual_seed(random_state)
+    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size], generator=generator)
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, generator=generator)
+    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
+
+    trainer = pl.Trainer(
+        max_epochs=int(classifier_param["max_epochs"]),
+        default_root_dir=r"lightning_logs",
+        callbacks=[pl.callbacks.EarlyStopping(monitor='val_loss', patience=10)]
+    )
+    trainer.fit(model, train_loader, val_loader)
+    return model
 
 
 if __name__ == '__main__':

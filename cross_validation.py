@@ -6,14 +6,16 @@ from sklearn.linear_model import LogisticRegression
 
 # Reuse functions from the previous script
 from evaluate_model_transfer import (preprocess_features, reduce_features_pca, 
-                             train_multiclass_classifier, get_default_classifier_param)
+                             train_multiclass_classifier, get_default_classifier_param,
+                             should_use_default_classifier_param)
 
 
 def cross_validate_single_dataset(data_folder, participant_id, n_folds=10, window_size=0.1, train_window_center=0.2,
                                   null_window_center=-0.2, new_framerate=float('inf'), classifier='multiclass-svm', 
-                                  classifier_param=np.nan, components_pca=100, frequency_range=(0, float('inf'))):
+                                  classifier_param=np.nan, components_pca=100, frequency_range=(0, float('inf')),
+                                  random_state=None):
 
-    if np.isnan(classifier_param):
+    if should_use_default_classifier_param(classifier_param):
         classifier_param = get_default_classifier_param(classifier)
 
     data = sio.loadmat(f'{data_folder}/Part{participant_id}Data.mat')['data'][0]
@@ -47,15 +49,19 @@ def cross_validate_single_dataset(data_folder, participant_id, n_folds=10, windo
             all_pred = np.zeros((n_trials_per_fold, n_stim))
             for stim in range(1, n_stim + 1):
                 if classifier == 'gradient-boosting':
-                    model = train_gradient_boosting(train_features, train_labels == stim, classifier_param)
+                    model = train_gradient_boosting(
+                        train_features, train_labels == stim, classifier_param, random_state=random_state)
                 elif classifier == 'lasso':
-                    model = train_for_stimulus_lasso_glm(train_features, train_labels == stim, classifier_param)
+                    model = train_for_stimulus_lasso_glm(
+                        train_features, train_labels == stim, classifier_param, random_state=random_state)
                 elif classifier == 'svm-binary':
-                    model = train_binary_svm(train_features, train_labels == stim, classifier_param)
+                    model = train_binary_svm(
+                        train_features, train_labels == stim, classifier_param, random_state=random_state)
                 all_pred[:, stim - 1] = model.predict_proba(test_features)[:, 1] if classifier == 'svm-binary' else model.predict(test_features)
             pred_lbl[fold == f] = np.argmax(all_pred, axis=1) + 1
         else:
-            model = train_multiclass_classifier(train_features, train_labels, classifier, classifier_param)
+            model = train_multiclass_classifier(
+                train_features, train_labels, classifier, classifier_param, random_state=random_state)
             pred_lbl[fold == f] = model.predict(test_features)
 
     if np.all(pred_lbl == 0):
@@ -73,20 +79,25 @@ def cross_validate_single_dataset(data_folder, participant_id, n_folds=10, windo
     return accuracy
 
 
-def train_gradient_boosting(train_features, train_labels, classifier_param):
-    model = GradientBoostingClassifier(n_estimators=int(classifier_param), max_depth=3, learning_rate=0.1)
+def train_gradient_boosting(train_features, train_labels, classifier_param, random_state=None):
+    model = GradientBoostingClassifier(
+        n_estimators=int(classifier_param),
+        max_depth=3,
+        learning_rate=0.1,
+        random_state=random_state,
+    )
     model.fit(train_features, train_labels)
     return model
 
 
-def train_for_stimulus_lasso_glm(train_features, train_labels, lambda_):
-    model = LogisticRegression(penalty='l1', C=lambda_, solver='liblinear')
+def train_for_stimulus_lasso_glm(train_features, train_labels, lambda_, random_state=None):
+    model = LogisticRegression(penalty='l1', C=lambda_, solver='liblinear', random_state=random_state)
     model.fit(train_features, train_labels)
     return model
 
 
-def train_binary_svm(train_features, train_labels, box_constraint):
-    model = SVC(C=box_constraint, kernel='linear', probability=True)
+def train_binary_svm(train_features, train_labels, box_constraint, random_state=None):
+    model = SVC(C=box_constraint, kernel='linear', probability=True, random_state=random_state)
     model.fit(train_features, train_labels)
     return model
 
