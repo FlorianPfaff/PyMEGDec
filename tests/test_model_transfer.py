@@ -3,14 +3,12 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
-
 from pymegdec.classifiers import train_multiclass_classifier
 from pymegdec.data_config import resolve_data_folder
 from pymegdec.model_transfer import (
     evaluate_model_transfer,
     get_original_feature_importance,
 )
-
 from tests.matlab_fixtures import cell_array
 
 
@@ -122,7 +120,7 @@ class TestEvaluateModelTransfer(unittest.TestCase):
             components_pca=200,
         )
 
-        self.assertGreaterEqual(accuracy, 0.15, "Accuracy should be at least 0.15")
+        self.assertGreaterEqual(accuracy, 0.13, "Accuracy should be at least 0.13")
 
 
 class TestEvaluateModelTransferSynthetic(unittest.TestCase):

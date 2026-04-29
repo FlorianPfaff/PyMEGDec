@@ -53,9 +53,15 @@ def __getattr__(name):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Evaluate model transfer for one participant.")
-    parser.add_argument("--data-dir", default=None, help="Directory containing Part*Data.mat files.")
-    parser.add_argument("--participant", type=int, default=2, help="Participant id to evaluate.")
+    parser = argparse.ArgumentParser(
+        description="Evaluate model transfer for one participant."
+    )
+    parser.add_argument(
+        "--data-dir", default=None, help="Directory containing Part*Data.mat files."
+    )
+    parser.add_argument(
+        "--participant", type=int, default=2, help="Participant id to evaluate."
+    )
     args = parser.parse_args()
 
     acc = evaluate_model_transfer(

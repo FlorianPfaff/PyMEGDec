@@ -1,10 +1,8 @@
 import unittest
 
 import numpy as np
-
 from pymegdec.classifiers import get_default_classifier_param
 from pymegdec.preprocessing import downsample_data, extract_windows, filter_features
-
 from tests.matlab_fixtures import cell_array
 
 
