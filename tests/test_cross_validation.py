@@ -1,10 +1,38 @@
 import os
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
 from pymegdec.cross_validation import cross_validate_single_dataset
+
+
+def _cell_array(values):
+    inner = np.empty((1, len(values)), dtype=object)
+    for index, value in enumerate(values):
+        inner[0, index] = value
+
+    outer = np.empty((1,), dtype=object)
+    outer[0] = inner
+    return outer
+
+
+def _mat_data(labels):
+    trialinfo = np.empty((1, 1), dtype=object)
+    trialinfo[0, 0] = labels
+    return {
+        "trial": _cell_array([np.zeros((1, 2)) for _ in labels]),
+        "trialinfo": trialinfo,
+    }
+
+
+class _ConstantClassifier:
+    def __init__(self, label):
+        self.label = label
+
+    def predict(self, features):
+        return np.full(features.shape[0], self.label)
 
 
 class TestCrossValidateSingleDataset(unittest.TestCase):
@@ -48,6 +76,39 @@ class TestCrossValidateSingleDataset(unittest.TestCase):
         accuracy = self._accuracy("scikit-mlp")
 
         self.assertGreaterEqual(accuracy, 0.15, "Accuracy should be at least 0.15")
+
+
+class TestCrossValidateSingleDatasetSynthetic(unittest.TestCase):
+    def test_cross_validate_single_dataset_without_null_window(self):
+        labels = np.array([1, 2, 1, 2])
+        stimuli_features = [
+            np.array([[index], [index + 1]], dtype=float)
+            for index in range(len(labels))
+        ]
+
+        with (
+            patch(
+                "pymegdec.cross_validation.sio.loadmat",
+                return_value={"data": np.array([_mat_data(labels)], dtype=object)},
+            ),
+            patch(
+                "pymegdec.cross_validation.preprocess_features",
+                return_value=(stimuli_features, []),
+            ),
+            patch(
+                "pymegdec.cross_validation.train_multiclass_classifier",
+                return_value=_ConstantClassifier(1),
+            ),
+        ):
+            accuracy = cross_validate_single_dataset(
+                "unused",
+                1,
+                n_folds=2,
+                null_window_center=np.nan,
+                components_pca=float("inf"),
+            )
+
+        self.assertEqual(accuracy, 0.5)
 
 
 if __name__ == "__main__":

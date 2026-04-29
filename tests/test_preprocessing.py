@@ -71,6 +71,20 @@ class TestPreprocessing(unittest.TestCase):
         self.assertFalse(np.allclose(data["trial"][0][0][1], original_second_trial))
         self.assertEqual(data["trial"][0][0][1].shape, original_second_trial.shape)
 
+    def test_bandpass_filter_accepts_low_and_high_frequency_cutoffs(self):
+        time = np.arange(0.0, 1.0, 0.01)[None, :]
+        trial = np.vstack(
+            [
+                np.sin(2 * np.pi * 5 * time.ravel()),
+                np.cos(2 * np.pi * 5 * time.ravel()),
+            ]
+        )
+        data = _data([trial.copy()], [time.copy()])
+
+        filter_features(data, 1, 10)
+
+        self.assertEqual(data["trial"][0][0][0].shape, trial.shape)
+
     def test_matlab_classifier_defaults_are_preserved(self):
         self.assertEqual(get_default_classifier_param("multiclass-svm"), 0.5)
         self.assertEqual(get_default_classifier_param("svm-binary"), 0.5)
