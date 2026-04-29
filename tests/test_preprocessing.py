@@ -1,25 +1,15 @@
 import unittest
 
 import numpy as np
-
 from pymegdec.classifiers import get_default_classifier_param
 from pymegdec.preprocessing import downsample_data, extract_windows, filter_features
-
-
-def _cell_array(values):
-    inner = np.empty((1, len(values)), dtype=object)
-    for index, value in enumerate(values):
-        inner[0, index] = value
-
-    outer = np.empty((1,), dtype=object)
-    outer[0] = inner
-    return outer
+from tests.matlab_fixtures import cell_array
 
 
 def _data(trials, times):
     return {
-        "trial": _cell_array(trials),
-        "time": _cell_array(times),
+        "trial": cell_array(trials),
+        "time": cell_array(times),
     }
 
 
@@ -70,6 +60,20 @@ class TestPreprocessing(unittest.TestCase):
 
         self.assertFalse(np.allclose(data["trial"][0][0][1], original_second_trial))
         self.assertEqual(data["trial"][0][0][1].shape, original_second_trial.shape)
+
+    def test_bandpass_filter_accepts_low_and_high_frequency_cutoffs(self):
+        time = np.arange(0.0, 1.0, 0.01)[None, :]
+        trial = np.vstack(
+            [
+                np.sin(2 * np.pi * 5 * time.ravel()),
+                np.cos(2 * np.pi * 5 * time.ravel()),
+            ]
+        )
+        data = _data([trial.copy()], [time.copy()])
+
+        filter_features(data, 1, 10)
+
+        self.assertEqual(data["trial"][0][0][0].shape, trial.shape)
 
     def test_matlab_classifier_defaults_are_preserved(self):
         self.assertEqual(get_default_classifier_param("multiclass-svm"), 0.5)
