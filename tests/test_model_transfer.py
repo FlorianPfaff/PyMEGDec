@@ -1,4 +1,6 @@
+import os
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -8,6 +10,8 @@ from pymegdec.model_transfer import (
     evaluate_model_transfer,
     get_original_feature_importance,
 )
+
+from tests.matlab_fixtures import cell_array
 
 
 class TestLinearSvmFeatures(unittest.TestCase):
@@ -57,6 +61,15 @@ class TestLinearSvmFeatures(unittest.TestCase):
             get_original_feature_importance(object())
 
 
+def _mat_data_with_time(time):
+    trialinfo = np.empty((1, 1), dtype=object)
+    trialinfo[0, 0] = np.array([1, 2])
+    return {
+        "time": cell_array([np.array([time])]),
+        "trialinfo": trialinfo,
+    }
+
+
 class TestEvaluateModelTransfer(unittest.TestCase):
     def setUp(self) -> None:
         self.parts = 2
@@ -69,6 +82,8 @@ class TestEvaluateModelTransfer(unittest.TestCase):
                 ],
             )
         except FileNotFoundError as exc:
+            if os.getenv("CI"):
+                self.fail(str(exc))
             self.skipTest(str(exc))
 
         self.null_window_center = np.nan
@@ -108,6 +123,22 @@ class TestEvaluateModelTransfer(unittest.TestCase):
         )
 
         self.assertGreaterEqual(accuracy, 0.15, "Accuracy should be at least 0.15")
+
+
+class TestEvaluateModelTransferSynthetic(unittest.TestCase):
+    def test_evaluate_model_transfer_rejects_sampling_rate_mismatch(self):
+        train_data = _mat_data_with_time([0.0, 0.1])
+        val_data = _mat_data_with_time([0.0, 0.2])
+
+        with patch(
+            "pymegdec.model_transfer.sio.loadmat",
+            side_effect=[
+                {"data": np.array([train_data], dtype=object)},
+                {"data": np.array([val_data], dtype=object)},
+            ],
+        ):
+            with self.assertRaisesRegex(ValueError, "Sampling rate"):
+                evaluate_model_transfer("unused", 1)
 
 
 if __name__ == "__main__":

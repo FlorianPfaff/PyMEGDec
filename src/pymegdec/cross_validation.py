@@ -32,6 +32,7 @@ def cross_validate_single_dataset(
         classifier_param = get_default_classifier_param(classifier)
 
     data_folder = resolve_data_folder(data_folder)
+
     data = sio.loadmat(f"{data_folder}/Part{participant_id}Data.mat")["data"][0]
     labels = data["trialinfo"][0][0]
     n_trials = len(labels)

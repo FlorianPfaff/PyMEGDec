@@ -10,27 +10,33 @@ import os
 from pathlib import Path
 from typing import Iterable
 
+
 DATA_DIR_ENV_VAR = "PYMEGDEC_DATA_DIR"
 LOCAL_DATA_DIR_FILE = ".pymegdec-data-dir"
 
 
-def _local_config_paths() -> list[Path]:
-    package_root = Path(__file__).resolve().parents[2]
-    return [
-        Path.cwd() / LOCAL_DATA_DIR_FILE,
-        package_root / LOCAL_DATA_DIR_FILE,
-    ]
-
-
 def _read_local_data_dir_file() -> tuple[str, Path] | None:
-    for config_path in _local_config_paths():
+    search_dirs = [Path.cwd(), *Path.cwd().parents]
+
+    package_path = Path(__file__).resolve()
+    if len(package_path.parents) > 2 and package_path.parents[1].name == "src":
+        search_dirs.append(package_path.parents[2])
+
+    seen_dirs = set()
+    for directory in search_dirs:
+        directory = directory.resolve()
+        if directory in seen_dirs:
+            continue
+        seen_dirs.add(directory)
+
+        config_path = directory / LOCAL_DATA_DIR_FILE
         if not config_path.exists():
             continue
 
         for line in config_path.read_text(encoding="utf-8").splitlines():
             value = line.strip()
             if value and not value.startswith("#"):
-                return value, config_path.parent
+                return value, directory
 
     return None
 
@@ -48,15 +54,13 @@ def resolve_data_folder(
     data_folder: str | os.PathLike[str] | None = None,
     *,
     required: bool = False,
-    required_files: Iterable[str] = (),
+    required_files: Iterable[str | os.PathLike[str]] = (),
 ) -> str:
     """Resolve the directory containing participant ``.mat`` files.
 
-    Resolution order is:
-    1. explicit ``data_folder`` argument,
-    2. ``PYMEGDEC_DATA_DIR`` environment variable,
-    3. local ``.pymegdec-data-dir`` file in the working directory or project root,
-    4. current working directory, preserving the historical default.
+    Resolution order is explicit argument, ``PYMEGDEC_DATA_DIR``, local
+    ``.pymegdec-data-dir`` config file, then the current working directory for
+    backwards compatibility.
     """
 
     source = "current working directory"
@@ -69,15 +73,15 @@ def resolve_data_folder(
         raw_data_folder = os.environ[DATA_DIR_ENV_VAR]
         source = DATA_DIR_ENV_VAR
     else:
-        local_data_folder = _read_local_data_dir_file()
-        if local_data_folder is not None:
-            raw_data_folder, relative_to = local_data_folder
+        local_config = _read_local_data_dir_file()
+        if local_config:
+            raw_data_folder, relative_to = local_config
             source = LOCAL_DATA_DIR_FILE
         else:
             raw_data_folder = "."
 
     path = _resolve_path(raw_data_folder, relative_to=relative_to)
-    missing_files = [name for name in required_files if not (path / name).exists()]
+    missing_files = [str(name) for name in required_files if not (path / name).exists()]
 
     if required and (not path.exists() or missing_files):
         detail = (
@@ -86,9 +90,8 @@ def resolve_data_folder(
             else "Data directory does not exist."
         )
         raise FileNotFoundError(
-            f"{detail} Set {DATA_DIR_ENV_VAR}, pass data_folder, or create "
-            f"an ignored {LOCAL_DATA_DIR_FILE} file in the repository root. "
-            f"Resolved {source} to: {path}"
+            f"{detail} Set {DATA_DIR_ENV_VAR}, pass data_folder, or create an ignored "
+            f"{LOCAL_DATA_DIR_FILE} file. Resolved {source} to: {path}"
         )
 
     return str(path)

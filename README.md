@@ -36,17 +36,27 @@ python -m pip install -e ".[all]"
 
 ## Data directory
 
-Participant data is configured at runtime so machine-specific or private data
-paths do not need to be committed to the repository.
+Participant data is configured at runtime so private or machine-specific paths
+do not need to be committed. Data files are expected to be named like
+`Part2Data.mat` and `Part2CueData.mat`.
 
 Resolution order:
 
 1. Pass `--data-dir` to a CLI command, or pass `data_folder` to the Python API.
 2. Set the `PYMEGDEC_DATA_DIR` environment variable.
-3. Create a local `.pymegdec-data-dir` file in the working directory or project root.
+3. Create a local `.pymegdec-data-dir` file containing one path. The resolver
+   searches the current directory, its parents, and the project root.
 4. Fall back to the current working directory for backwards compatibility.
 
-`.pymegdec-data-dir` is ignored by git and should contain one local path.
+`.pymegdec-data-dir` is ignored by git and can contain a path relative to the
+file location.
+
+On PowerShell:
+
+```powershell
+$env:PYMEGDEC_DATA_DIR = "C:\path\to\data"
+python -m unittest
+```
 
 ## CLI usage
 
@@ -70,6 +80,14 @@ from pymegdec.cross_validation import cross_validate_single_dataset
 
 transfer_accuracy = evaluate_model_transfer("/path/to/MEG-Data", 2, classifier="multiclass-svm")
 cv_accuracy = cross_validate_single_dataset("/path/to/MEG-Data", 2, classifier="multiclass-svm")
+```
+
+If `PYMEGDEC_DATA_DIR` or `.pymegdec-data-dir` is configured, the first argument
+can be `None`:
+
+```python
+transfer_accuracy = evaluate_model_transfer(None, 2, classifier="multiclass-svm")
+cv_accuracy = cross_validate_single_dataset(None, 2, classifier="multiclass-svm")
 ```
 
 ## Tests

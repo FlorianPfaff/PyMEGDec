@@ -30,6 +30,7 @@ def evaluate_model_transfer(
         classifier_param = get_default_classifier_param(classifier)
 
     data_folder = resolve_data_folder(data_folder)
+
     train_exp_data = sio.loadmat(f"{data_folder}/Part{parts}Data.mat")["data"][0]
     val_exp_data = sio.loadmat(f"{data_folder}/Part{parts}CueData.mat")["data"][0]
 
