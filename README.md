@@ -1,24 +1,40 @@
 # PyMEGDec
 
-Utilities for evaluating MEG decoding models with cross-validation and
-model-transfer experiments.
+Utilities for MEG decoding experiments, including model transfer between experiment
+conditions and cross-validation on a single dataset.
 
-## Installation
+## Repository layout
 
-Install the package in editable mode from the repository root:
+```text
+src/pymegdec/              Package source code
+  alpha_signal.py          Alpha-band filtering and phase extraction
+  alpha_visualization.py   Alpha signal and phase-shift plotting helpers
+  classifiers.py           Classifier factories and PyTorch Lightning model
+  preprocessing.py         Filtering, downsampling, window extraction, PCA
+  model_transfer.py        Train-on-experiment / validate-on-cue evaluation
+  cross_validation.py      Single-dataset cross-validation routine
+tests/                     Unit and data-dependent unittest suites
+.github/workflows/         CI jobs for unit and data-dependent test subsets
+```
 
-```powershell
+Top-level `cross_validation.py`, `evaluate_model_transfer.py`,
+`extract_alpha_signal.py`, and `show_bandpass_signal_and_shifts.py` are
+compatibility wrappers for existing imports and direct script usage.
+
+## Setup
+
+```bash
+python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-Install the optional machine-learning extras when using `xgboost` or
-`pytorch-mlp` classifiers:
+Install optional classifier backends when needed:
 
-```powershell
-python -m pip install -e ".[ml]"
+```bash
+python -m pip install -e ".[all]"
 ```
 
-## Data Directory
+## Data directory
 
 Participant data is configured at runtime so machine-specific or private data
 paths do not need to be committed to the repository.
@@ -32,38 +48,38 @@ Resolution order:
 
 `.pymegdec-data-dir` is ignored by git and should contain one local path.
 
-## CLI Usage
+## CLI usage
 
-```powershell
-pymegdec-cross-validate --data-dir "C:\path\to\MEG-Data" --participant 2
-pymegdec-transfer --data-dir "C:\path\to\MEG-Data" --participant 2 --null-window-center nan
+```bash
+pymegdec-cross-validate --data-dir "/path/to/MEG-Data" --participant 2
+pymegdec-transfer --data-dir "/path/to/MEG-Data" --participant 2 --null-window-center nan
 ```
 
 The grouped command exposes the same workflows:
 
-```powershell
+```bash
 pymegdec cross-validate --participant 2
 pymegdec transfer --participant 2 --classifier multiclass-svm
 ```
 
-## Python API
+## Examples
 
 ```python
+from pymegdec.model_transfer import evaluate_model_transfer
 from pymegdec.cross_validation import cross_validate_single_dataset
-from pymegdec.evaluate_model_transfer import evaluate_model_transfer
 
-accuracy = cross_validate_single_dataset(data_folder="C:/path/to/MEG-Data", participant_id=2)
-transfer_accuracy = evaluate_model_transfer(data_folder="C:/path/to/MEG-Data", parts=2)
+transfer_accuracy = evaluate_model_transfer("/path/to/MEG-Data", 2, classifier="multiclass-svm")
+cv_accuracy = cross_validate_single_dataset("/path/to/MEG-Data", 2, classifier="multiclass-svm")
 ```
 
 ## Tests
 
-The default suite includes synthetic-data tests that run without private MEG
-files. Accuracy checks that use real participant `.mat` files are skipped when
-the data directory cannot be resolved.
+The default suite includes fast tests that run without private MEG files.
+Data-dependent accuracy checks are skipped when the data directory cannot be
+resolved.
 
-```powershell
-python -m unittest
+```bash
+python -m unittest discover -v
 ```
 
 To run the data-dependent integration tests, point `PYMEGDEC_DATA_DIR` at a

@@ -6,7 +6,7 @@ import numpy as np
 import scipy.io as sio
 
 from pymegdec.cross_validation import cross_validate_single_dataset
-from pymegdec.evaluate_model_transfer import evaluate_model_transfer
+from pymegdec.model_transfer import evaluate_model_transfer
 
 
 def _synthetic_part_data(labels):
@@ -27,9 +27,9 @@ def _synthetic_part_data(labels):
         times[0, trial_index] = time_vector[None, :]
 
     return {
-        'trial': trials,
-        'time': times,
-        'trialinfo': labels[None, :],
+        "trial": trials,
+        "time": times,
+        "trialinfo": labels[None, :],
     }
 
 
@@ -38,16 +38,16 @@ class TestSyntheticData(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             data_dir = Path(tmp_dir)
             sio.savemat(
-                data_dir / 'Part2Data.mat',
-                {'data': _synthetic_part_data([1, 2, 1, 2, 1, 2, 1, 2])},
+                data_dir / "Part2Data.mat",
+                {"data": _synthetic_part_data([1, 2, 1, 2, 1, 2, 1, 2])},
             )
 
             accuracy = cross_validate_single_dataset(
                 data_dir,
                 participant_id=2,
                 n_folds=4,
-                classifier='multiclass-svm',
-                components_pca=float('inf'),
+                classifier="multiclass-svm",
+                components_pca=float("inf"),
             )
 
         self.assertGreaterEqual(accuracy, 0.75)
@@ -56,24 +56,24 @@ class TestSyntheticData(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             data_dir = Path(tmp_dir)
             sio.savemat(
-                data_dir / 'Part2Data.mat',
-                {'data': _synthetic_part_data([1, 2, 1, 2, 1, 2, 1, 2])},
+                data_dir / "Part2Data.mat",
+                {"data": _synthetic_part_data([1, 2, 1, 2, 1, 2, 1, 2])},
             )
             sio.savemat(
-                data_dir / 'Part2CueData.mat',
-                {'data': _synthetic_part_data([1, 2, 1, 2])},
+                data_dir / "Part2CueData.mat",
+                {"data": _synthetic_part_data([1, 2, 1, 2])},
             )
 
             accuracy = evaluate_model_transfer(
                 data_dir,
                 parts=2,
                 null_window_center=np.nan,
-                classifier='multiclass-svm',
-                components_pca=float('inf'),
+                classifier="multiclass-svm",
+                components_pca=float("inf"),
             )
 
         self.assertEqual(accuracy, 1.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

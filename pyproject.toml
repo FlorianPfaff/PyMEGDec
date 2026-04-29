@@ -5,23 +5,43 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pymegdec"
 version = "0.1.0"
-description = "Utilities for evaluating MEG decoding model transfer and cross-validation."
+description = "MEG decoding utilities for model transfer and cross-validation experiments."
+authors = [
+    { name = "Florian Pfaff", email = "pfaff@ias.uni-stuttgart.de" },
+]
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "numpy>=1.26,<3",
-    "scipy>=1.11,<2",
-    "scikit-learn>=1.3,<2",
+    "matplotlib",
+    "numpy",
+    "scikit-learn",
+    "scipy",
 ]
 
 [project.optional-dependencies]
+xgboost = [
+    "xgboost",
+]
+torch = [
+    "pytorch-lightning",
+    "torch",
+]
+all = [
+    "pytorch-lightning",
+    "torch",
+    "xgboost",
+]
 ml = [
-    "pytorch-lightning>=2.2,<3",
-    "torch>=2.2,<3",
-    "xgboost>=2,<4",
+    "pytorch-lightning",
+    "torch",
+    "xgboost",
 ]
 dev = [
-    "pytest>=8,<9",
+    "autopep8>=2.3.2,<3.0.0",
+    "pytest",
+    "pytorch-lightning",
+    "torch",
+    "xgboost",
 ]
 
 [project.scripts]
@@ -31,3 +51,45 @@ pymegdec-transfer = "pymegdec.cli:transfer"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.mypy]
+check_untyped_defs = true
+
+[tool.ruff]
+line-length = 180
+
+[tool.pylint.MAIN]
+py-version = "3.13"
+fail-under = 10
+ignore = ["CVS"]
+
+[tool.pylint."MESSAGES CONTROL"]
+disable = [
+  "raw-checker-failed",
+  "bad-inline-option",
+  "locally-disabled",
+  "file-ignored",
+  "suppressed-message",
+  "deprecated-pragma",
+  "use-symbolic-message-instead",
+  "C",
+  "W0221",
+  "duplicate-code",
+  "import-error",
+  "redefined-builtin",
+  "cyclic-import",
+]
+
+[tool.pylint.FORMAT]
+max-line-length = 180
+
+[tool.pylint.DESIGN]
+max-args = 6
+max-positional-arguments = 6
+max-parents = 15
+max-public-methods = 25
+min-public-methods = 0

@@ -11,7 +11,7 @@ from typing import Sequence
 import numpy as np
 
 from .cross_validation import cross_validate_single_dataset
-from .evaluate_model_transfer import evaluate_model_transfer
+from .model_transfer import evaluate_model_transfer
 
 
 def _float_or_inf(value: str) -> float:
