@@ -4,12 +4,14 @@ import numpy as np
 import scipy.io as sio
 from pymegdec.classifiers import (
     get_default_classifier_param,
+    should_use_default_classifier_param,
     train_multiclass_classifier,
 )
 from pymegdec.data_config import resolve_data_folder
 from pymegdec.preprocessing import preprocess_features, reduce_features_pca
 
 
+# jscpd:ignore-start
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals
 def evaluate_model_transfer(
     data_folder,
@@ -22,10 +24,12 @@ def evaluate_model_transfer(
     classifier_param=np.nan,
     components_pca=100,
     frequency_range=(0, float("inf")),
+    random_state=None,
     return_feature_importance=False,
 ):
+    # jscpd:ignore-end
 
-    if not isinstance(classifier_param, dict) and np.all(np.isnan(classifier_param)):
+    if should_use_default_classifier_param(classifier_param):
         classifier_param = get_default_classifier_param(classifier)
 
     data_folder = resolve_data_folder(data_folder)
@@ -94,7 +98,11 @@ def evaluate_model_transfer(
         )
 
     model = train_multiclass_classifier(
-        features_train_exp, labels_train_exp, classifier, classifier_param
+        features_train_exp,
+        labels_train_exp,
+        classifier,
+        classifier_param,
+        random_state=random_state,
     )
     predictions_val_exp = model.predict(features_val_exp)
 
