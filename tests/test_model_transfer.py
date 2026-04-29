@@ -33,6 +33,7 @@ class TestEvaluateModelTransfer(unittest.TestCase):
             self.parts,
             null_window_center=self.null_window_center,
             classifier=classifier,
+            components_pca=200,
         )
 
         self.assertGreaterEqual(accuracy, 0.25, "Accuracy should be at least 0.25")
