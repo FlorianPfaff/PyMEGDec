@@ -4,7 +4,49 @@ from pathlib import Path
 
 import numpy as np
 
-from pymegdec.model_transfer import evaluate_model_transfer
+from pymegdec.classifiers import train_multiclass_classifier
+from pymegdec.model_transfer import evaluate_model_transfer, get_original_feature_importance
+
+
+class TestLinearSvmFeatures(unittest.TestCase):
+    def test_multiclass_svm_uses_linear_kernel(self):
+        features = np.array([[-2.0, 0.0], [-1.0, 0.0], [1.0, 0.0], [2.0, 0.0]])
+        labels = np.array([0, 0, 1, 1])
+
+        model = train_multiclass_classifier(features, labels, "multiclass-svm", 1.0)
+
+        self.assertEqual(model[-1].kernel, "linear")
+        self.assertTrue(hasattr(model[-1], "coef_"))
+
+    def test_original_feature_importance_without_pca(self):
+        class Model:
+            coef_ = np.array([[2.0, 3.0]])
+
+        np.testing.assert_allclose(get_original_feature_importance(Model()), [[2.0, 3.0]])
+
+    def test_original_feature_importance_maps_pca_space(self):
+        class Model:
+            coef_ = np.array([[2.0, 3.0]])
+
+        pca_components = np.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+
+        np.testing.assert_allclose(get_original_feature_importance(Model(), pca_components), [[2.0, 3.0, 0.0]])
+
+    def test_original_feature_importance_uses_pipeline_scale(self):
+        class Scaler:
+            scale_ = np.array([2.0, 4.0])
+
+        class Classifier:
+            coef_ = np.array([[2.0, 8.0]])
+
+        class Model:
+            steps = [("standardscaler", Scaler()), ("svc", Classifier())]
+
+        np.testing.assert_allclose(get_original_feature_importance(Model()), [[1.0, 2.0]])
+
+    def test_original_feature_importance_requires_coefficients(self):
+        with self.assertRaises(ValueError):
+            get_original_feature_importance(object())
 
 
 class TestEvaluateModelTransfer(unittest.TestCase):
