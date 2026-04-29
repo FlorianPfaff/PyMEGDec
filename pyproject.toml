@@ -31,6 +31,11 @@ all = [
     "torch",
     "xgboost",
 ]
+ml = [
+    "pytorch-lightning",
+    "torch",
+    "xgboost",
+]
 dev = [
     "autopep8>=2.3.2,<3.0.0",
     "pytest",
@@ -38,6 +43,11 @@ dev = [
     "torch",
     "xgboost",
 ]
+
+[project.scripts]
+pymegdec = "pymegdec.cli:main"
+pymegdec-cross-validate = "pymegdec.cli:cross_validate"
+pymegdec-transfer = "pymegdec.cli:transfer"
 
 [tool.setuptools.packages.find]
 where = ["src"]

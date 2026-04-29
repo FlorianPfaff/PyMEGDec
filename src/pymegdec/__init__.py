@@ -25,7 +25,10 @@ from pymegdec.reaction_time_analysis import (
     join_alpha_reaction_times,
 )
 
+__version__ = "0.1.0"
+
 __all__ = [
+    "__version__",
     "DATA_DIR_ENV_VAR",
     "AlphaMetricConfig",
     "AlphaMovementConfig",

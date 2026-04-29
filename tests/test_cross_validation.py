@@ -34,7 +34,7 @@ class TestCrossValidateSingleDataset(unittest.TestCase):
                 required_files=[f"Part{participant_id}Data.mat"],
             )
         except FileNotFoundError as exc:
-            if os.getenv("CI"):
+            if os.getenv("PYMEGDEC_REQUIRE_DATA"):
                 self.fail(str(exc))
             self.skipTest(str(exc))
 

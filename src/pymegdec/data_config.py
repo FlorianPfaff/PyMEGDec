@@ -1,4 +1,8 @@
-"""Runtime configuration for locating private MEG data files."""
+"""Helpers for locating private PyMEGDec data files.
+
+Data paths are intentionally resolved at runtime so machine-specific paths do
+not need to be committed to the repository.
+"""
 
 from __future__ import annotations
 
