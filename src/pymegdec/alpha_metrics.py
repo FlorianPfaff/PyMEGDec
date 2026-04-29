@@ -10,10 +10,9 @@ from pathlib import Path
 import numpy as np
 import scipy.io as sio
 import scipy.signal
-from scipy.spatial import Delaunay  # pylint: disable=no-name-in-module
-
 from pymegdec.alpha_signal import get_data_field, get_time_vector, get_trial_signal
 from pymegdec.data_config import resolve_data_folder
+from scipy.spatial import Delaunay  # pylint: disable=no-name-in-module
 
 DEFAULT_OCCIPITAL_PATTERN = r"^M[LRZ]O"
 DEFAULT_TIME_WINDOW = (-0.4, -0.05)

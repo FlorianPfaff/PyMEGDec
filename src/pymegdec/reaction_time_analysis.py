@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from scipy import stats
-
 from pymegdec.alpha_metrics import (
     AlphaMetricConfig,
     compute_alpha_metrics,
@@ -19,6 +17,7 @@ from pymegdec.alpha_metrics import (
 )
 from pymegdec.alpha_signal import get_data_field
 from pymegdec.data_config import resolve_data_folder
+from scipy import stats
 
 DEFAULT_ALPHA_RT_METRICS = (
     "log_alpha_power",
