@@ -190,8 +190,9 @@ def load_reaction_time_csv(path, config=None):
                         else config.default_dataset
                     ),
                     "trial": _to_int(row[trial_column]),
-                    "reaction_time": _to_float(row[rt_column])
-                    * config.reaction_time_scale,
+                    "reaction_time": (
+                        _to_float(row[rt_column]) * config.reaction_time_scale
+                    ),
                 }
             )
     return rows

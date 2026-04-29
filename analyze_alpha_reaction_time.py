@@ -60,7 +60,9 @@ def main():
         help="Output CSV for matched trial-level alpha/RT rows.",
     )
     parser.add_argument(
-        "--summary-output", required=True, help="Output CSV for association summaries."
+        "--summary-output",
+        required=True,
+        help="Output CSV for association summaries.",
     )
     parser.add_argument(
         "--plots-dir",
@@ -102,23 +104,33 @@ def main():
         default=None,
         help="Reaction-time CSV dataset column override.",
     )
-    parser.add_argument(
-        "--location-pattern",
-        default=DEFAULT_OCCIPITAL_PATTERN,
-        help="Regex for selecting channels by label.",
+    alpha_argument_specs = (
+        (
+            "--location-pattern",
+            {
+                "default": DEFAULT_OCCIPITAL_PATTERN,
+                "help": "Regex for selecting channels by label.",
+            },
+        ),
+        (
+            "--time-window",
+            {
+                "type": _parse_range,
+                "default": DEFAULT_TIME_WINDOW,
+                "help": "Time window as start,stop in seconds.",
+            },
+        ),
+        (
+            "--frequency-range",
+            {
+                "type": _parse_range,
+                "default": DEFAULT_FREQUENCY_RANGE,
+                "help": "Frequency range as low,high in Hz.",
+            },
+        ),
     )
-    parser.add_argument(
-        "--time-window",
-        type=_parse_range,
-        default=DEFAULT_TIME_WINDOW,
-        help="Time window as start,stop in seconds.",
-    )
-    parser.add_argument(
-        "--frequency-range",
-        type=_parse_range,
-        default=DEFAULT_FREQUENCY_RANGE,
-        help="Frequency range as low,high in Hz.",
-    )
+    for name, kwargs in alpha_argument_specs:
+        parser.add_argument(name, **kwargs)
     parser.add_argument(
         "--metrics",
         nargs="*",
