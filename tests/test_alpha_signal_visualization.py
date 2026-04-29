@@ -2,7 +2,6 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
-
 from pymegdec.alpha_signal import extract_phase, extract_time_basis, get_time_vector
 from pymegdec.alpha_visualization import (
     calculate_phase_differences,

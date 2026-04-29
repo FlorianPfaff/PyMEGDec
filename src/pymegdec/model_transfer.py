@@ -2,7 +2,6 @@ import warnings
 
 import numpy as np
 import scipy.io as sio
-
 from pymegdec.classifiers import (
     get_default_classifier_param,
     train_multiclass_classifier,

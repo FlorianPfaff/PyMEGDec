@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 from typing import Iterable
 
-
 DATA_DIR_ENV_VAR = "PYMEGDEC_DATA_DIR"
 LOCAL_DATA_DIR_FILE = ".pymegdec-data-dir"
 

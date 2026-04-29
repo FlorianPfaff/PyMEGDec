@@ -3,10 +3,8 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
-
 from pymegdec.cross_validation import cross_validate_single_dataset
 from pymegdec.data_config import resolve_data_folder
-
 from tests.matlab_fixtures import cell_array
 
 

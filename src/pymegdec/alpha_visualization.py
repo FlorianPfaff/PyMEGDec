@@ -3,7 +3,6 @@ import re
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.io as sio
-
 from pymegdec.alpha_signal import (
     extract_alpha_signal_and_phase,
     get_data_field,
