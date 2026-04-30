@@ -91,6 +91,7 @@ jobs:
           rclone copy \
             --webdav-url "${HOST}/public.php/webdav/" \
             --webdav-user "${TOKEN}" \
+            --webdav-pass "" \
             --webdav-vendor nextcloud \
             :webdav: "${DATA_DIR}" \
             --transfers 4 \
