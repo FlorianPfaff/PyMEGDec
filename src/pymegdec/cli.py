@@ -24,6 +24,15 @@ from .alpha_movement_analysis import (
 )
 from .cross_validation import cross_validate_single_dataset
 from .model_transfer import evaluate_model_transfer
+from .reaction_time_analysis import available_participants, parse_participant_spec
+from .stimulus_decoding import (
+    DEFAULT_DECODING_STEP_S,
+    DEFAULT_DECODING_TIME_WINDOW,
+    DEFAULT_STIMULUS_WINDOW_SIZE,
+    StimulusDecodingConfig,
+    export_time_resolved_stimulus_decoding,
+    window_centers_from_range,
+)
 
 
 def _float_or_inf(value: str) -> float:
@@ -62,6 +71,13 @@ def _parse_classifier_param(value: str | None):
         raise argparse.ArgumentTypeError(
             "classifier parameters must be numeric, JSON, or a Python literal"
         ) from exc
+
+
+def _parse_float_list(value: str) -> tuple[float, ...]:
+    values = tuple(float(token.strip()) for token in value.split(",") if token.strip())
+    if not values:
+        raise argparse.ArgumentTypeError("At least one value is required.")
+    return values
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -151,6 +167,127 @@ def _build_transfer_parser(prog: str | None = None) -> argparse.ArgumentParser:
     return parser
 
 
+def _build_stimulus_decoding_parser(
+    prog: str | None = None,
+) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog=prog,
+        description="Run time-resolved train-main/validate-cue stimulus decoding.",
+    )
+    parser.add_argument(
+        "--data-dir",
+        dest="data_folder",
+        default=None,
+        help="Directory containing Part*Data.mat and Part*CueData.mat files.",
+    )
+    parser.add_argument(
+        "--participants",
+        default=None,
+        help=(
+            "Participant ids such as 1-4,6,8. Defaults to all participants "
+            "with main and cue files."
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        required=True,
+        help="Output CSV for participant/window decoding accuracies.",
+    )
+    parser.add_argument(
+        "--summary-output",
+        default=None,
+        help="Optional output CSV summarized across participants by time window.",
+    )
+    parser.add_argument(
+        "--plots-dir",
+        default=None,
+        help="Optional directory for group-level stimulus decoding plots.",
+    )
+    parser.add_argument(
+        "--time-window",
+        type=parse_range,
+        default=DEFAULT_DECODING_TIME_WINDOW,
+        help="Window-center range as start,stop in seconds.",
+    )
+    parser.add_argument(
+        "--window-centers",
+        type=_parse_float_list,
+        default=None,
+        help=(
+            "Explicit comma-separated window centers in seconds. Overrides "
+            "--time-window."
+        ),
+    )
+    parser.add_argument(
+        "--window-step-s",
+        type=float,
+        default=DEFAULT_DECODING_STEP_S,
+        help="Step between time-window centers in seconds.",
+    )
+    parser.add_argument(
+        "--window-size",
+        type=float,
+        default=DEFAULT_STIMULUS_WINDOW_SIZE,
+        help="Window size in seconds.",
+    )
+    parser.add_argument(
+        "--null-window-center",
+        type=_float_or_inf,
+        default=float("nan"),
+        help="Center of an optional pre-stimulus null window, or nan.",
+    )
+    parser.add_argument(
+        "--new-framerate",
+        type=_float_or_inf,
+        default=float("inf"),
+        help="Target frame rate, or inf.",
+    )
+    parser.add_argument(
+        "--classifier", default="multiclass-svm", help="Classifier name."
+    )
+    parser.add_argument(
+        "--classifier-param",
+        default=None,
+        help="Classifier parameter value, JSON, or Python literal.",
+    )
+    parser.add_argument(
+        "--components-pca",
+        type=_int_or_inf,
+        default=100,
+        help="Number of PCA components, or inf.",
+    )
+    parser.add_argument(
+        "--frequency-range",
+        type=_float_or_inf,
+        nargs=2,
+        metavar=("LOW", "HIGH"),
+        default=(0.0, float("inf")),
+        help="Frequency range in Hz.",
+    )
+    parser.add_argument(
+        "--chance-classes",
+        type=int,
+        default=16,
+        help="Number of stimulus classes used for the chance line.",
+    )
+    parser.add_argument(
+        "--permutations",
+        type=int,
+        default=0,
+        help=(
+            "Number of label shuffles per participant window for "
+            "permutation p-values."
+        ),
+    )
+    parser.add_argument(
+        "--permutation-seed",
+        type=int,
+        default=None,
+        help="Seed for permutation label shuffles. Keep fixed for reproducibility.",
+    )
+    return parser
+
+
 def cross_validate(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
     parser = _build_cross_validate_parser(prog=prog)
     args = parser.parse_args(argv)
@@ -173,6 +310,58 @@ def transfer(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
         **_common_kwargs(args),
     )
     print(accuracy)
+    return 0
+
+
+def _transfer_participants(participant_spec, data_folder):
+    if participant_spec:
+        return parse_participant_spec(participant_spec)
+    main_participants = set(available_participants(data_folder, cue=False))
+    cue_participants = set(available_participants(data_folder, cue=True))
+    return sorted(main_participants & cue_participants)
+
+
+def stimulus_decoding(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
+    parser = _build_stimulus_decoding_parser(prog=prog)
+    args = parser.parse_args(argv)
+    participants = _transfer_participants(args.participants, args.data_folder)
+    if not participants:
+        parser.error(
+            "No participants found. Pass --participants or configure a data "
+            "directory with matching main and cue MAT files."
+        )
+    window_centers = args.window_centers
+    if window_centers is None:
+        window_centers = window_centers_from_range(args.time_window, args.window_step_s)
+
+    config = StimulusDecodingConfig(
+        window_centers=window_centers,
+        window_size=args.window_size,
+        null_window_center=args.null_window_center,
+        new_framerate=args.new_framerate,
+        classifier=args.classifier,
+        classifier_param=_parse_classifier_param(args.classifier_param),
+        components_pca=args.components_pca,
+        frequency_range=tuple(args.frequency_range),
+        chance_classes=args.chance_classes,
+        permutations=args.permutations,
+        permutation_seed=args.permutation_seed,
+    )
+
+    rows, summary_rows = export_time_resolved_stimulus_decoding(
+        args.data_folder,
+        participants,
+        args.output,
+        summary_output_path=args.summary_output,
+        plots_dir=args.plots_dir,
+        config=config,
+        progress=print,
+    )
+    print(f"Wrote {len(rows)} participant/window rows to {args.output}")
+    if args.summary_output:
+        print(f"Wrote {len(summary_rows)} summary rows to {args.summary_output}")
+    if args.plots_dir:
+        print(f"Wrote plots to {args.plots_dir}")
     return 0
 
 
@@ -261,7 +450,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="PyMEGDec command-line interface.")
     parser.add_argument(
         "command",
-        choices=["cross-validate", "transfer", "alpha-movement-results"],
+        choices=[
+            "cross-validate",
+            "transfer",
+            "stimulus-decoding",
+            "alpha-movement-results",
+        ],
         help="Workflow to run.",
     )
 
@@ -274,6 +468,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cross_validate(remaining, prog="pymegdec cross-validate")
     if command == "transfer":
         return transfer(remaining, prog="pymegdec transfer")
+    if command == "stimulus-decoding":
+        return stimulus_decoding(remaining, prog="pymegdec stimulus-decoding")
     if command == "alpha-movement-results":
         return alpha_movement_results(remaining, prog="pymegdec alpha-movement-results")
     parser.error(f"Unsupported command: {command}")
