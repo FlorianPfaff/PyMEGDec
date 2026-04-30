@@ -62,6 +62,13 @@ pythonpath = ["src"]
 check_untyped_defs = true
 ignore_missing_imports = true
 
+[tool.black]
+line-length = 180
+
+[tool.isort]
+line_length = 180
+profile = "black"
+
 [tool.ruff]
 line-length = 180
 
