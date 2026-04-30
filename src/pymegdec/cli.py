@@ -16,6 +16,12 @@ from .alpha_metrics import (
     DEFAULT_TIME_WINDOW,
     AlphaMetricConfig,
 )
+from .alpha_movement_analysis import (
+    DEFAULT_POST_WINDOW,
+    DEFAULT_PRE_WINDOW,
+    AlphaMovementAnalysisConfig,
+    export_alpha_movement_analysis,
+)
 from .cross_validation import cross_validate_single_dataset
 from .model_transfer import evaluate_model_transfer
 
@@ -170,13 +176,93 @@ def transfer(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
     return 0
 
 
+def _build_alpha_movement_results_parser(
+    prog: str | None = None,
+) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog=prog, description="Analyze exported alpha movement summaries."
+    )
+    parser.add_argument(
+        "--movement-summary",
+        required=True,
+        help="Input CSV from analyze_alpha_movement.py --summary-output.",
+    )
+    parser.add_argument(
+        "--effect-output",
+        required=True,
+        help="Output CSV for participant/condition pre-post effects.",
+    )
+    parser.add_argument(
+        "--condition-summary-output",
+        required=True,
+        help="Output CSV for condition-level effect summaries.",
+    )
+    parser.add_argument(
+        "--plots-dir",
+        default=None,
+        help="Optional output directory for condition-level PNG plots.",
+    )
+    parser.add_argument(
+        "--pre-window",
+        type=parse_range,
+        default=DEFAULT_PRE_WINDOW,
+        help="Pre-stimulus window as start,stop in seconds.",
+    )
+    parser.add_argument(
+        "--post-window",
+        type=parse_range,
+        default=DEFAULT_POST_WINDOW,
+        help="Post-stimulus window as start,stop in seconds.",
+    )
+    parser.add_argument(
+        "--plot-labels",
+        nargs="*",
+        default=None,
+        help="Optional condition labels to include in plots.",
+    )
+    return parser
+
+
+def alpha_movement_results(
+    argv: Sequence[str] | None = None, prog: str | None = None
+) -> int:
+    parser = _build_alpha_movement_results_parser(prog=prog)
+    args = parser.parse_args(argv)
+    config = AlphaMovementAnalysisConfig(
+        pre_window=args.pre_window,
+        post_window=args.post_window,
+        plot_labels=(
+            None
+            if args.plot_labels is None
+            else tuple(str(label) for label in args.plot_labels)
+        ),
+    )
+    effect_rows, summary_rows = export_alpha_movement_analysis(
+        args.movement_summary,
+        args.effect_output,
+        args.condition_summary_output,
+        plots_dir=args.plots_dir,
+        config=config,
+    )
+    print(
+        f"Wrote {len(effect_rows)} participant-condition rows to {args.effect_output}"
+    )
+    print(
+        f"Wrote {len(summary_rows)} condition summary rows to "
+        f"{args.condition_summary_output}"
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
     parser = argparse.ArgumentParser(description="PyMEGDec command-line interface.")
     parser.add_argument(
-        "command", choices=["cross-validate", "transfer"], help="Workflow to run."
+        "command",
+        choices=["cross-validate", "transfer", "alpha-movement-results"],
+        help="Workflow to run.",
     )
 
     if not argv or argv[0] in {"-h", "--help"}:
@@ -188,6 +274,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cross_validate(remaining, prog="pymegdec cross-validate")
     if command == "transfer":
         return transfer(remaining, prog="pymegdec transfer")
+    if command == "alpha-movement-results":
+        return alpha_movement_results(remaining, prog="pymegdec alpha-movement-results")
     parser.error(f"Unsupported command: {command}")
     return 2
 
