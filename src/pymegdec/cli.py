@@ -183,7 +183,10 @@ def _build_stimulus_decoding_parser(
     parser.add_argument(
         "--participants",
         default=None,
-        help="Participant ids such as 1-4,6,8. Defaults to all participants with main and cue files.",
+        help=(
+            "Participant ids such as 1-4,6,8. Defaults to all participants "
+            "with main and cue files."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -210,7 +213,10 @@ def _build_stimulus_decoding_parser(
         "--window-centers",
         type=_parse_float_list,
         default=None,
-        help="Explicit comma-separated window centers in seconds. Overrides --time-window.",
+        help=(
+            "Explicit comma-separated window centers in seconds. Overrides "
+            "--time-window."
+        ),
     )
     parser.add_argument(
         "--window-step-s",
@@ -268,7 +274,10 @@ def _build_stimulus_decoding_parser(
         "--permutations",
         type=int,
         default=0,
-        help="Number of label shuffles per participant window for permutation p-values.",
+        help=(
+            "Number of label shuffles per participant window for "
+            "permutation p-values."
+        ),
     )
     parser.add_argument(
         "--permutation-seed",
@@ -318,7 +327,8 @@ def stimulus_decoding(argv: Sequence[str] | None = None, prog: str | None = None
     participants = _transfer_participants(args.participants, args.data_folder)
     if not participants:
         parser.error(
-            "No participants found. Pass --participants or configure a data directory with matching main and cue MAT files."
+            "No participants found. Pass --participants or configure a data "
+            "directory with matching main and cue MAT files."
         )
     window_centers = args.window_centers
     if window_centers is None:
