@@ -1,0 +1,227 @@
+name: Download MEG data
+
+on:
+  workflow_dispatch:
+    inputs:
+      data_cache_version:
+        description: Bump this value, e.g. v2, to force a fresh MEG data cache.
+        required: true
+        default: v1
+        type: string
+      data_dir:
+        description: Directory to restore/populate and cache.
+        required: true
+        default: .cache/meg-data-all
+        type: string
+      fail_if_missing_data:
+        description: Fail if no matching MEG MAT files are found after restore/download.
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  download-meg-data:
+    name: Hydrate and verify MEG data cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Restore MEG data cache
+        id: meg-data-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ inputs.data_dir }}
+          key: meg-data-all-${{ runner.os }}-${{ inputs.data_cache_version }}
+
+      - name: Install rclone
+        if: ${{ steps.meg-data-cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y rclone
+
+      - name: Download MEG data from bwSync&Share
+        if: ${{ steps.meg-data-cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        env:
+          MEG_DATA_ALL: ${{ secrets.MEG_DATA_ALL }}
+          DATA_DIR: ${{ inputs.data_dir }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${MEG_DATA_ALL:-}" ]]; then
+            echo "The MEG_DATA_ALL repository secret is empty or unavailable." >&2
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import os
+          import shlex
+          from urllib.parse import urlparse
+
+          url = os.environ["MEG_DATA_ALL"].rstrip("/")
+          parsed = urlparse(url)
+          parts = parsed.path.strip("/").split("/")
+
+          if "s" not in parts:
+              raise SystemExit("Expected a Nextcloud-style public share URL containing /s/<token>")
+
+          token_index = parts.index("s") + 1
+          if token_index >= len(parts) or not parts[token_index]:
+              raise SystemExit("Expected a Nextcloud-style public share URL containing /s/<token>")
+
+          host = f"{parsed.scheme}://{parsed.netloc}"
+          token = parts[token_index]
+
+          with open("/tmp/nextcloud-share.env", "w", encoding="utf-8") as handle:
+              handle.write(f"HOST={shlex.quote(host)}\n")
+              handle.write(f"TOKEN={shlex.quote(token)}\n")
+          PY
+
+          source /tmp/nextcloud-share.env
+          rm -rf "${DATA_DIR}"
+          mkdir -p "${DATA_DIR}"
+
+          rclone copy \
+            --webdav-url "${HOST}/public.php/webdav/" \
+            --webdav-user "${TOKEN}" \
+            --webdav-vendor nextcloud \
+            :webdav: "${DATA_DIR}" \
+            --transfers 4 \
+            --checkers 8 \
+            --retries 10 \
+            --low-level-retries 20 \
+            --stats 30s \
+            --create-empty-src-dirs
+
+          rm -f /tmp/nextcloud-share.env
+
+      - name: Verify MEG data and write manifest
+        shell: bash
+        env:
+          DATA_DIR: ${{ inputs.data_dir }}
+          DATA_CACHE_VERSION: ${{ inputs.data_cache_version }}
+          CACHE_HIT: ${{ steps.meg-data-cache.outputs.cache-hit }}
+          FAIL_IF_MISSING_DATA: ${{ inputs.fail_if_missing_data }}
+        run: |
+          set -euo pipefail
+          mkdir -p data-manifest
+
+          set +e
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import os
+          import subprocess
+          from collections import defaultdict
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          data_dir = Path(os.environ["DATA_DIR"]).expanduser()
+          fail_if_missing = os.environ["FAIL_IF_MISSING_DATA"].lower() == "true"
+          cache_hit = os.environ.get("CACHE_HIT") or "false"
+          cache_key = f"meg-data-all-Linux-{os.environ['DATA_CACHE_VERSION']}"
+          manifest_path = Path("data-manifest/meg-data-manifest.md")
+
+          main_files: list[Path] = []
+          cue_files: list[Path] = []
+
+          if data_dir.exists():
+              for path in data_dir.rglob("Part*Data.mat"):
+                  if path.name.endswith("CueData.mat"):
+                      cue_files.append(path)
+                  else:
+                      main_files.append(path)
+              for path in data_dir.rglob("Part*CueData.mat"):
+                  if path not in cue_files:
+                      cue_files.append(path)
+
+          counts_by_dir: dict[Path, dict[str, int]] = defaultdict(lambda: {"main": 0, "cue": 0})
+          for path in main_files:
+              counts_by_dir[path.parent]["main"] += 1
+          for path in cue_files:
+              counts_by_dir[path.parent]["cue"] += 1
+
+          matched_dirs = [
+              (directory, counts)
+              for directory, counts in counts_by_dir.items()
+              if counts["main"] > 0 and counts["cue"] > 0
+          ]
+          matched_dirs.sort(key=lambda item: (item[1]["main"] + item[1]["cue"], str(item[0])), reverse=True)
+
+          if data_dir.exists():
+              du = subprocess.run(["du", "-sh", str(data_dir)], text=True, capture_output=True, check=False)
+              disk_usage = du.stdout.strip() or du.stderr.strip() or "unknown"
+          else:
+              disk_usage = "missing"
+
+          lines = [
+              "# MEG data cache manifest",
+              "",
+              f"- Created: `{datetime.now(timezone.utc).isoformat()}`",
+              f"- Data directory: `{data_dir}`",
+              f"- Cache key: `{cache_key}`",
+              f"- Cache hit: `{cache_hit}`",
+              f"- Disk usage: `{disk_usage}`",
+              f"- Main MAT files: `{len(main_files)}`",
+              f"- Cue MAT files: `{len(cue_files)}`",
+              f"- Directories containing both main and cue files: `{len(matched_dirs)}`",
+              "",
+              "## Candidate data directories",
+              "",
+          ]
+
+          if matched_dirs:
+              for directory, counts in matched_dirs[:20]:
+                  lines.append(f"- `{directory}`: {counts['main']} main, {counts['cue']} cue")
+          else:
+              lines.append("No directory containing both `Part*Data.mat` and `Part*CueData.mat` was found.")
+
+          lines.extend(["", "## Example files", ""])
+          for label, paths in (("Main", sorted(main_files)), ("Cue", sorted(cue_files))):
+              lines.append(f"### {label}")
+              if paths:
+                  for path in paths[:30]:
+                      lines.append(f"- `{path.relative_to(data_dir) if data_dir.exists() else path}`")
+                  if len(paths) > 30:
+                      lines.append(f"- ... and {len(paths) - 30} more")
+              else:
+                  lines.append("- none")
+              lines.append("")
+
+          manifest_path.write_text("\n".join(lines), encoding="utf-8")
+          print(manifest_path.read_text(encoding="utf-8"))
+
+          if fail_if_missing and not matched_dirs:
+              raise SystemExit("No valid MEG data directory found after cache restore/download.")
+          PY
+          validation_status=$?
+          set -e
+
+          if [[ -f data-manifest/meg-data-manifest.md ]]; then
+            cat data-manifest/meg-data-manifest.md >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+          exit "${validation_status}"
+
+      - name: Save MEG data cache
+        if: ${{ steps.meg-data-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: ${{ inputs.data_dir }}
+          key: meg-data-all-${{ runner.os }}-${{ inputs.data_cache_version }}
+
+      - name: Upload data manifest
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: meg-data-manifest-${{ inputs.data_cache_version }}
+          path: data-manifest/
+          if-no-files-found: warn
