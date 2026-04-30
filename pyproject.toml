@@ -92,6 +92,7 @@ disable = [
   "import-error",
   "redefined-builtin",
   "cyclic-import",
+  "implicit-str-concat",
 ]
 
 [tool.pylint.FORMAT]
