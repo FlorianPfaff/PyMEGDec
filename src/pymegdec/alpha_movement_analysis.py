@@ -9,7 +9,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-
 from pymegdec.alpha_metrics import write_alpha_metrics_csv
 
 DEFAULT_PRE_WINDOW = (-0.4, -0.02)

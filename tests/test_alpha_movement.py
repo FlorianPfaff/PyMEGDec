@@ -4,7 +4,6 @@ import unittest
 from pathlib import Path
 
 import numpy as np
-
 from pymegdec.alpha_movement import (
     AlphaMovementConfig,
     compute_alpha_movement,
