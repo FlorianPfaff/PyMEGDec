@@ -48,6 +48,7 @@ dev = [
 pymegdec = "pymegdec.cli:main"
 pymegdec-cross-validate = "pymegdec.cli:cross_validate"
 pymegdec-transfer = "pymegdec.cli:transfer"
+pymegdec-stimulus-decoding = "pymegdec.cli:stimulus_decoding"
 pymegdec-alpha-movement-results = "pymegdec.cli:alpha_movement_results"
 
 [tool.setuptools.packages.find]

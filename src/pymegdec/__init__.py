@@ -30,6 +30,12 @@ from pymegdec.reaction_time_analysis import (
     analyze_alpha_reaction_times,
     join_alpha_reaction_times,
 )
+from pymegdec.stimulus_decoding import (
+    StimulusDecodingConfig,
+    evaluate_time_resolved_stimulus_transfer,
+    export_time_resolved_stimulus_decoding,
+    summarize_stimulus_decoding,
+)
 
 __version__ = "0.1.0"
 
@@ -42,19 +48,23 @@ __all__ = [
     "AlphaReactionTimeExportConfig",
     "ReactionTimeCsvConfig",
     "ReactionTimeUnavailableError",
+    "StimulusDecodingConfig",
     "analyze_alpha_reaction_times",
     "analyze_alpha_movement_windows",
     "compute_alpha_movement",
     "compute_alpha_metrics",
     "cross_validate_single_dataset",
     "evaluate_model_transfer",
+    "evaluate_time_resolved_stimulus_transfer",
     "export_alpha_movement",
     "export_alpha_movement_analysis",
     "export_participant_alpha_metrics",
+    "export_time_resolved_stimulus_decoding",
     "extract_phase",
     "extract_time_basis",
     "get_original_feature_importance",
     "join_alpha_reaction_times",
     "resolve_data_folder",
+    "summarize_stimulus_decoding",
     "summarize_alpha_movement_effects",
 ]

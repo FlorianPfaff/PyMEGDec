@@ -12,6 +12,7 @@ src/pymegdec/              Package source code
   alpha_movement.py        Sensor-level alpha movement trajectory export
   alpha_visualization.py   Alpha signal and phase-shift plotting helpers
   reaction_time_analysis.py Alpha/RT join and association summaries
+  stimulus_decoding.py     Time-resolved train-main / validate-cue decoding
   classifiers.py           Classifier factories and PyTorch Lightning model
   preprocessing.py         Filtering, downsampling, window extraction, PCA
   model_transfer.py        Train-on-experiment / validate-on-cue evaluation
@@ -25,6 +26,7 @@ Top-level `cross_validation.py`, `evaluate_model_transfer.py`,
 `export_alpha_metrics.py` are compatibility wrappers for existing imports and
 direct script usage. `analyze_alpha_reaction_time.py` provides an exploratory
 analysis command for alpha metrics and behavioral reaction times.
+`analyze_stimulus_decoding.py` exports time-resolved stimulus decoding curves.
 `analyze_alpha_movement.py` exports sensor-level alpha movement trajectories.
 
 ## Setup
@@ -69,6 +71,7 @@ python -m unittest
 ```bash
 pymegdec-cross-validate --data-dir "/path/to/MEG-Data" --participant 2
 pymegdec-transfer --data-dir "/path/to/MEG-Data" --participant 2 --null-window-center nan
+pymegdec-stimulus-decoding --data-dir "/path/to/MEG-Data" --participants 2 --output outputs/part2_stimulus_decoding.csv
 ```
 
 The grouped command exposes the same workflows:
@@ -76,6 +79,7 @@ The grouped command exposes the same workflows:
 ```bash
 pymegdec cross-validate --participant 2
 pymegdec transfer --participant 2 --classifier multiclass-svm
+pymegdec stimulus-decoding --participants 2 --output outputs/part2_stimulus_decoding.csv
 ```
 
 ## Examples
@@ -95,6 +99,30 @@ can be `None`:
 transfer_accuracy = evaluate_model_transfer(None, 2, classifier="multiclass-svm")
 cv_accuracy = cross_validate_single_dataset(None, 2, classifier="multiclass-svm")
 ```
+
+## Time-resolved stimulus decoding
+
+Stimulus decoding can be evaluated over a sequence of windows around stimulus
+onset. The command trains on `Part*Data.mat`, validates on `Part*CueData.mat`,
+and reports 16-way stimulus accuracy for each participant and window center.
+By default it uses no null class, because the cue validation files do not
+contain null trials and the clean question is which of the 16 stimuli was shown.
+
+```powershell
+python analyze_stimulus_decoding.py --participants 2 --time-window=-0.2,0.6 --window-step-s 0.05 --output outputs\part2_stimulus_decoding.csv --summary-output outputs\part2_stimulus_decoding_summary.csv --plots-dir outputs\part2_stimulus_decoding_plots
+```
+
+The output CSV includes the stimulus-decoding accuracy, chance level, PCA
+variance, and class counts for every participant/window row. Add
+`--permutations N` to run label-shuffle tests (`N=0` by default, no permutation
+step). Summary CSV adds `n_significant_p_0.05` and `n_significant_p_0.01` and
+`n_with_permutation` per window.
+
+```powershell
+python analyze_stimulus_decoding.py --participants 2 --time-window=-0.2,0.6 --window-step-s 0.05 --permutations 200 --permutation-seed 42 --output outputs\part2_stimulus_decoding.csv --summary-output outputs\part2_stimulus_decoding_summary.csv --plots-dir outputs\part2_stimulus_decoding_plots
+```
+
+The summary CSV and plot aggregate the curve across participants.
 
 ## Tests
 

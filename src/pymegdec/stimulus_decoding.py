@@ -1,0 +1,451 @@
+"""Time-resolved stimulus decoding analyses."""
+
+from __future__ import annotations
+
+import warnings
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import scipy.io as sio
+
+from pymegdec.alpha_metrics import write_alpha_metrics_csv
+from pymegdec.classifiers import (
+    get_default_classifier_param,
+    should_use_default_classifier_param,
+    train_multiclass_classifier,
+)
+from pymegdec.data_config import resolve_data_folder
+from pymegdec.preprocessing import (
+    downsample_data,
+    extract_windows,
+    filter_features,
+    reduce_features_pca,
+)
+
+DEFAULT_DECODING_TIME_WINDOW = (-0.2, 0.6)
+DEFAULT_DECODING_STEP_S = 0.05
+DEFAULT_STIMULUS_WINDOW_SIZE = 0.1
+DEFAULT_CHANCE_CLASSES = 16
+DEFAULT_WINDOW_CENTERS = tuple(
+    float(value)
+    for value in np.round(
+        np.arange(
+            DEFAULT_DECODING_TIME_WINDOW[0],
+            DEFAULT_DECODING_TIME_WINDOW[1] + DEFAULT_DECODING_STEP_S / 2,
+            DEFAULT_DECODING_STEP_S,
+        ),
+        10,
+    )
+)
+
+
+@dataclass(frozen=True)
+class StimulusDecodingConfig:
+    """Parameters for time-resolved stimulus decoding."""
+
+    window_centers: tuple[float, ...] = DEFAULT_WINDOW_CENTERS
+    window_size: float = DEFAULT_STIMULUS_WINDOW_SIZE
+    null_window_center: float = float("nan")
+    new_framerate: float = float("inf")
+    classifier: str = "multiclass-svm"
+    classifier_param: object = float("nan")
+    components_pca: int | float = 100
+    frequency_range: tuple[float, float] = (0.0, float("inf"))
+    chance_classes: int = DEFAULT_CHANCE_CLASSES
+    random_state: int | None = None
+    permutations: int = 0
+    permutation_seed: int | None = None
+
+
+def window_centers_from_range(
+    time_window: tuple[float, float], step_s: float
+) -> tuple[float, ...]:
+    """Build evenly spaced window centers from a start/stop range."""
+
+    start, stop = time_window
+    if step_s <= 0:
+        raise ValueError("Window step must be positive.")
+    if start > stop:
+        raise ValueError("Time window start must be before stop.")
+    return tuple(
+        float(value)
+        for value in np.round(np.arange(start, stop + step_s / 2, step_s), 10)
+    )
+
+
+def evaluate_time_resolved_stimulus_transfer(
+    data_folder,
+    participants,
+    *,
+    config=None,
+    progress=None,
+):
+    """Evaluate train-main/validate-cue stimulus decoding across time windows."""
+
+    config = config or StimulusDecodingConfig()
+    data_folder = resolve_data_folder(data_folder)
+    rows = []
+    for participant in participants:
+        if progress is not None:
+            progress(f"START participant={participant}")
+        rows.extend(
+            evaluate_participant_time_resolved_stimulus_transfer(
+                data_folder, participant, config=config
+            )
+        )
+        if progress is not None:
+            progress(f"DONE participant={participant}")
+    return rows
+
+
+def evaluate_participant_time_resolved_stimulus_transfer(
+    data_folder,
+    participant,
+    *,
+    config=None,
+):
+    """Evaluate one participant's stimulus transfer accuracy across window centers."""
+
+    config = config or StimulusDecodingConfig()
+    classifier_param = config.classifier_param
+    if should_use_default_classifier_param(classifier_param):
+        classifier_param = get_default_classifier_param(config.classifier)
+
+    train_data = _load_participant_data(data_folder, participant, cue=False)
+    validation_data = _load_participant_data(data_folder, participant, cue=True)
+    _check_matching_sample_rate(train_data, validation_data)
+
+    labels_train = np.asarray(train_data["trialinfo"][0][0], dtype=int).ravel()
+    labels_validation = np.asarray(validation_data["trialinfo"][0][0], dtype=int).ravel()
+    if np.isnan(config.null_window_center):
+        labels_train = labels_train - 1
+        labels_validation = labels_validation - 1
+
+    if not np.array_equal(np.unique(labels_train), np.unique(labels_validation)):
+        warnings.warn(
+            "There are labels in the training or validation experiment "
+            "that are not in the other experiment."
+        )
+
+    train_data = _prepare_data(train_data, config)
+    validation_data = _prepare_data(validation_data, config)
+    permutation_rng = np.random.default_rng(config.permutation_seed)
+
+    rows = []
+    for window_center in config.window_centers:
+        rows.append(
+            _evaluate_window(
+                train_data,
+                validation_data,
+                labels_train,
+                labels_validation,
+                participant,
+                float(window_center),
+                classifier_param,
+                config,
+                permutation_rng=permutation_rng,
+            )
+        )
+    return rows
+
+
+def summarize_stimulus_decoding(rows):
+    """Summarize decoding rows across participants for each window center."""
+
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[(row["variant"], row["window_center_s"])].append(row)
+
+    summary_rows = []
+    for key, group_rows in sorted(grouped.items(), key=lambda item: item[0]):
+        variant, window_center = key
+        accuracies = [_to_float(row["accuracy"]) for row in group_rows]
+        mean, std, sem = _summary_stats(accuracies)
+        percentages = [100.0 * value for value in accuracies if np.isfinite(value)]
+        median = float(np.median(percentages)) if percentages else np.nan
+        permutation_p = [_to_float(row.get("permutation_p_value")) for row in group_rows]
+        n_with_permutation = sum(np.isfinite(permutation_p))
+        significant_05 = sum(value < 0.05 for value in permutation_p if np.isfinite(value))
+        significant_01 = sum(value < 0.01 for value in permutation_p if np.isfinite(value))
+        chance_accuracy = _to_float(group_rows[0]["chance_accuracy"])
+        summary_rows.append(
+            {
+                "variant": variant,
+                "window_center_s": window_center,
+                "n_participants": len(group_rows),
+                "accuracy_mean": mean,
+                "accuracy_std": std,
+                "accuracy_sem": sem,
+                "percent_mean": 100.0 * mean,
+                "percent_median": median,
+                "percent_std": 100.0 * std,
+                "percent_sem": 100.0 * sem,
+                "chance_accuracy": chance_accuracy,
+                "chance_percent": 100.0 * chance_accuracy,
+                "above_chance_count": sum(value > chance_accuracy for value in accuracies),
+                "n_with_permutation": int(n_with_permutation),
+                "n_significant_p_0.05": int(significant_05),
+                "n_significant_p_0.01": int(significant_01),
+            }
+        )
+    return summary_rows
+
+
+def write_stimulus_decoding_plots(summary_rows, output_dir):
+    """Write group-level stimulus decoding plots."""
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _plot_group_accuracy(summary_rows, output_dir / "stimulus_decoding_accuracy.png")
+
+
+def export_time_resolved_stimulus_decoding(
+    data_folder,
+    participants,
+    output_path,
+    *,
+    summary_output_path=None,
+    plots_dir=None,
+    config=None,
+    progress=None,
+):
+    """Run time-resolved stimulus decoding and write CSV/plot artifacts."""
+
+    config = config or StimulusDecodingConfig()
+    rows = evaluate_time_resolved_stimulus_transfer(
+        data_folder,
+        participants,
+        config=config,
+        progress=progress,
+    )
+    write_alpha_metrics_csv(rows, output_path)
+    summary_rows = summarize_stimulus_decoding(rows)
+    if summary_output_path:
+        write_alpha_metrics_csv(summary_rows, summary_output_path)
+    if plots_dir:
+        write_stimulus_decoding_plots(summary_rows, plots_dir)
+    return rows, summary_rows
+
+
+def _load_participant_data(data_folder, participant, *, cue):
+    suffix = "CueData" if cue else "Data"
+    path = Path(data_folder) / f"Part{participant}{suffix}.mat"
+    return sio.loadmat(path)["data"][0]
+
+
+def _check_matching_sample_rate(train_data, validation_data):
+    train_sample_interval = np.diff(train_data["time"][0][0][0][0, :2])
+    validation_sample_interval = np.diff(validation_data["time"][0][0][0][0, :2])
+    if not np.allclose(train_sample_interval, validation_sample_interval):
+        raise ValueError("Sampling rate of the two experiments must match.")
+
+
+def _prepare_data(data, config):
+    data = filter_features(data, config.frequency_range[0], config.frequency_range[1])
+    if config.new_framerate != float("inf"):
+        data = downsample_data(data, config.new_framerate)
+    return data
+
+
+def _evaluate_window(
+    train_data,
+    validation_data,
+    labels_train,
+    labels_validation,
+    participant,
+    window_center,
+    classifier_param,
+    config,
+    permutation_rng=None,
+):
+    train_window = _centered_window(window_center, config.window_size)
+    null_window = _null_window(config)
+    train_stimuli_features, train_null_features = extract_windows(
+        train_data, train_window, null_window
+    )
+    validation_stimuli_features, _ = extract_windows(
+        validation_data, train_window, (np.nan, np.nan)
+    )
+    train_features = np.hstack(train_stimuli_features + train_null_features).T
+    train_labels = labels_train
+    if train_null_features:
+        train_labels = np.concatenate(
+            (labels_train, np.zeros(len(train_null_features), dtype=int))
+        )
+    validation_features = np.hstack(validation_stimuli_features).T
+
+    pca_components = _actual_pca_components(config.components_pca, train_features)
+    explained_variance = np.nan
+    if config.components_pca != float("inf"):
+        train_features, coeff, train_features_mean, explained_variance = (
+            reduce_features_pca(train_features, int(config.components_pca))
+        )
+        validation_features = (
+            validation_features - train_features_mean
+        ) @ coeff[:, :pca_components]
+
+    model = train_multiclass_classifier(
+        train_features,
+        train_labels,
+        config.classifier,
+        classifier_param,
+        random_state=config.random_state,
+    )
+    predictions = model.predict(validation_features)
+    accuracy = float(np.mean(predictions == labels_validation))
+    permutation_accuracy = np.array([], dtype=float)
+    permutation_p = np.nan
+    if config.permutations > 0:
+        permutation_accuracy = _permutation_accuracy_curve(
+            train_features,
+            validation_features,
+            labels_validation,
+            train_labels,
+            config.classifier,
+            classifier_param,
+            config.random_state,
+            config.permutations,
+            permutation_rng,
+        )
+        permutation_p = float(np.mean(permutation_accuracy >= accuracy))
+        if np.isfinite(permutation_p):
+            permutation_p = (permutation_p * config.permutations + 1.0) / (
+                config.permutations + 1.0
+            )
+    chance_accuracy = 1.0 / config.chance_classes
+    variant = "without_null" if np.isnan(config.null_window_center) else "with_null"
+    null_prediction_rate = (
+        float(np.mean(predictions == 0)) if variant == "with_null" else np.nan
+    )
+
+    return {
+        "participant": participant,
+        "variant": variant,
+        "window_center_s": window_center,
+        "window_start_s": train_window[0],
+        "window_stop_s": train_window[1],
+        "accuracy": accuracy,
+        "percent": 100.0 * accuracy,
+        "chance_accuracy": chance_accuracy,
+        "chance_percent": 100.0 * chance_accuracy,
+        "above_chance": accuracy > chance_accuracy,
+        "n_train_trials": len(labels_train),
+        "n_validation_trials": len(labels_validation),
+        "n_train_classes": len(np.unique(labels_train)),
+        "n_validation_classes": len(np.unique(labels_validation)),
+        "n_permutations": int(config.permutations),
+        "permutation_seed": config.permutation_seed,
+        "permutation_p_value": permutation_p,
+        "permutation_accuracy_mean": (
+            float(np.mean(permutation_accuracy))
+            if permutation_accuracy.size
+            else np.nan
+        ),
+        "permutation_accuracy_std": (
+            float(np.std(permutation_accuracy, ddof=1))
+            if permutation_accuracy.size > 1
+            else np.nan
+        ),
+        "null_window_center_s": config.null_window_center,
+        "null_prediction_rate": null_prediction_rate,
+        "classifier": config.classifier,
+        "classifier_param": classifier_param,
+        "components_pca": config.components_pca,
+        "actual_components_pca": pca_components,
+        "pca_explained_variance_percent": explained_variance,
+        "frequency_low_hz": config.frequency_range[0],
+        "frequency_high_hz": config.frequency_range[1],
+    }
+
+
+def _centered_window(center, size):
+    return center - size / 2, center + size / 2
+
+
+def _null_window(config):
+    if np.isnan(config.null_window_center):
+        return np.nan, np.nan
+    return _centered_window(config.null_window_center, config.window_size)
+
+
+def _actual_pca_components(components_pca, features):
+    if components_pca == float("inf"):
+        return features.shape[1]
+    return min(int(components_pca), features.shape[0], features.shape[1])
+
+
+def _to_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return np.nan
+
+
+def _permutation_accuracy_curve(
+    train_features,
+    validation_features,
+    labels_validation,
+    train_labels,
+    classifier,
+    classifier_param,
+    random_state,
+    n_permutations,
+    permutation_rng,
+):
+    if permutation_rng is None:
+        permutation_rng = np.random.default_rng()
+
+    permuted_scores = []
+    for _ in range(int(n_permutations)):
+        permuted_train_labels = np.array(train_labels, copy=True)
+        permutation_rng.shuffle(permuted_train_labels)
+        model = train_multiclass_classifier(
+            train_features,
+            permuted_train_labels,
+            classifier,
+            classifier_param,
+            random_state=random_state,
+        )
+        predictions = model.predict(validation_features)
+        permuted_scores.append(float(np.mean(predictions == labels_validation)))
+    return np.asarray(permuted_scores, dtype=float)
+
+
+def _summary_stats(values):
+    values = np.asarray(list(values), dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return np.nan, np.nan, np.nan
+    std = float(np.std(values, ddof=1)) if values.size > 1 else 0.0
+    return float(np.mean(values)), std, float(std / np.sqrt(values.size))
+
+
+def _plot_group_accuracy(summary_rows, output_path):
+    figure, axes = plt.subplots(figsize=(8, 5))
+    grouped = defaultdict(list)
+    for row in summary_rows:
+        grouped[row["variant"]].append(row)
+
+    chance_percent = None
+    for variant, rows in sorted(grouped.items()):
+        rows = sorted(rows, key=lambda row: _to_float(row["window_center_s"]))
+        x = np.asarray([_to_float(row["window_center_s"]) for row in rows], dtype=float)
+        y = np.asarray([_to_float(row["percent_mean"]) for row in rows], dtype=float)
+        sem = np.asarray([_to_float(row["percent_sem"]) for row in rows], dtype=float)
+        chance_percent = _to_float(rows[0]["chance_percent"])
+        axes.plot(x, y, marker="o", label=variant.replace("_", " "))
+        axes.fill_between(x, y - sem, y + sem, alpha=0.2)
+
+    if chance_percent is not None:
+        axes.axhline(chance_percent, color="black", linewidth=1, linestyle="--")
+    axes.axvline(0, color="black", linewidth=1, linestyle=":")
+    axes.set_xlabel("window center from stimulus (s)")
+    axes.set_ylabel("stimulus decoding accuracy (%)")
+    axes.grid(True, alpha=0.25)
+    axes.legend(fontsize="small")
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=150)
+    plt.close(figure)
