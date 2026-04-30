@@ -1,0 +1,231 @@
+name: Manual stimulus decoding
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Runner label. Use self-hosted when the MEG data are available only on a local runner.
+        required: true
+        default: ubuntu-latest
+        type: choice
+        options:
+          - ubuntu-latest
+          - self-hosted
+      python_version:
+        description: Python version used for the analysis environment.
+        required: true
+        default: "3.13"
+        type: string
+      data_dir:
+        description: Directory containing Part*Data.mat and Part*CueData.mat files.
+        required: true
+        default: MEG-Data
+        type: string
+      participants:
+        description: Participant ids, e.g. 1-4,6,8. Leave empty to auto-detect participants with main and cue files.
+        required: false
+        default: ""
+        type: string
+      time_window:
+        description: Window-center range as start,stop in seconds. Include pre-stimulus time for the null comparison.
+        required: true
+        default: "-0.4,0.8"
+        type: string
+      window_step_s:
+        description: Step between time-window centers in seconds.
+        required: true
+        default: "0.025"
+        type: string
+      window_size:
+        description: Window size in seconds.
+        required: true
+        default: "0.1"
+        type: string
+      classifier:
+        description: Classifier name passed to pymegdec-stimulus-decoding.
+        required: true
+        default: multiclass-svm
+        type: string
+      classifier_param:
+        description: Optional classifier parameter, JSON, Python literal, numeric value, or empty.
+        required: false
+        default: ""
+        type: string
+      components_pca:
+        description: Number of PCA components, or inf.
+        required: true
+        default: "100"
+        type: string
+      frequency_low:
+        description: Lower frequency bound in Hz.
+        required: true
+        default: "0"
+        type: string
+      frequency_high:
+        description: Upper frequency bound in Hz, or inf.
+        required: true
+        default: inf
+        type: string
+      chance_classes:
+        description: Number of stimulus classes used for the chance line.
+        required: true
+        default: "16"
+        type: string
+      permutations:
+        description: Number of label shuffles per participant/window for permutation p-values.
+        required: true
+        default: "1000"
+        type: string
+      permutation_seed:
+        description: Seed for permutation label shuffles.
+        required: true
+        default: "42"
+        type: string
+      install_extra:
+        description: Optional dependency extra to install.
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - xgboost
+          - torch
+          - all
+      output_prefix:
+        description: Prefix for output CSVs and plot directory under outputs/.
+        required: true
+        default: stimulus_decoding
+        type: string
+      fail_if_missing_data:
+        description: Fail if data_dir does not exist.
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  stimulus-decoding:
+    name: Run stimulus decoding
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [[ "${{ inputs.install_extra }}" == "none" ]]; then
+            python -m pip install -e .
+          else
+            python -m pip install -e ".[${{ inputs.install_extra }}]"
+          fi
+
+      - name: Validate data directory
+        shell: bash
+        env:
+          DATA_DIR: ${{ inputs.data_dir }}
+          FAIL_IF_MISSING_DATA: ${{ inputs.fail_if_missing_data }}
+        run: |
+          set -euo pipefail
+          if [[ -d "${DATA_DIR}" ]]; then
+            echo "Using data directory: ${DATA_DIR}"
+            find "${DATA_DIR}" -maxdepth 1 -type f \( -name 'Part*Data.mat' -o -name 'Part*CueData.mat' \) | sort | head -40
+          elif [[ "${FAIL_IF_MISSING_DATA}" == "true" ]]; then
+            echo "Data directory does not exist: ${DATA_DIR}" >&2
+            echo "Use a self-hosted runner with the data available at data_dir, or check out/copy the data into the runner workspace before this step." >&2
+            exit 1
+          else
+            echo "Data directory does not exist, but fail_if_missing_data=false: ${DATA_DIR}"
+          fi
+
+      - name: Run 16-way time-resolved stimulus decoding
+        shell: bash
+        env:
+          DATA_DIR: ${{ inputs.data_dir }}
+          PARTICIPANTS: ${{ inputs.participants }}
+          TIME_WINDOW: ${{ inputs.time_window }}
+          WINDOW_STEP_S: ${{ inputs.window_step_s }}
+          WINDOW_SIZE: ${{ inputs.window_size }}
+          CLASSIFIER: ${{ inputs.classifier }}
+          CLASSIFIER_PARAM: ${{ inputs.classifier_param }}
+          COMPONENTS_PCA: ${{ inputs.components_pca }}
+          FREQUENCY_LOW: ${{ inputs.frequency_low }}
+          FREQUENCY_HIGH: ${{ inputs.frequency_high }}
+          CHANCE_CLASSES: ${{ inputs.chance_classes }}
+          PERMUTATIONS: ${{ inputs.permutations }}
+          PERMUTATION_SEED: ${{ inputs.permutation_seed }}
+          OUTPUT_PREFIX: ${{ inputs.output_prefix }}
+        run: |
+          set -euo pipefail
+          mkdir -p outputs
+
+          output_csv="outputs/${OUTPUT_PREFIX}.csv"
+          summary_csv="outputs/${OUTPUT_PREFIX}_summary.csv"
+          plots_dir="outputs/${OUTPUT_PREFIX}_plots"
+
+          cmd=(
+            pymegdec-stimulus-decoding
+            --data-dir "${DATA_DIR}"
+            --output "${output_csv}"
+            --summary-output "${summary_csv}"
+            --plots-dir "${plots_dir}"
+            --time-window "${TIME_WINDOW}"
+            --window-step-s "${WINDOW_STEP_S}"
+            --window-size "${WINDOW_SIZE}"
+            --null-window-center nan
+            --classifier "${CLASSIFIER}"
+            --components-pca "${COMPONENTS_PCA}"
+            --frequency-range "${FREQUENCY_LOW}" "${FREQUENCY_HIGH}"
+            --chance-classes "${CHANCE_CLASSES}"
+            --permutations "${PERMUTATIONS}"
+            --permutation-seed "${PERMUTATION_SEED}"
+          )
+
+          if [[ -n "${PARTICIPANTS}" ]]; then
+            cmd+=(--participants "${PARTICIPANTS}")
+          fi
+
+          if [[ -n "${CLASSIFIER_PARAM}" ]]; then
+            cmd+=(--classifier-param "${CLASSIFIER_PARAM}")
+          fi
+
+          printf 'Running command:'
+          printf ' %q' "${cmd[@]}"
+          printf '\n'
+          "${cmd[@]}"
+
+          {
+            echo "# Stimulus decoding run"
+            echo
+            echo "- Data directory: \`${DATA_DIR}\`"
+            echo "- Participants: \`${PARTICIPANTS:-auto-detected}\`"
+            echo "- Time-window centers: \`${TIME_WINDOW}\`"
+            echo "- Window step: \`${WINDOW_STEP_S}\` s"
+            echo "- Window size: \`${WINDOW_SIZE}\` s"
+            echo "- Classifier: \`${CLASSIFIER}\`"
+            echo "- PCA components: \`${COMPONENTS_PCA}\`"
+            echo "- Frequency range: \`${FREQUENCY_LOW}\` to \`${FREQUENCY_HIGH}\` Hz"
+            echo "- Chance level: 1 / ${CHANCE_CLASSES}"
+            echo "- Permutations: \`${PERMUTATIONS}\`"
+            echo "- Permutation seed: \`${PERMUTATION_SEED}\`"
+            echo
+            echo "The workflow forces \`--null-window-center nan\`. Therefore pre-stimulus time points are evaluated as ordinary 16-way decoding windows instead of being appended as a separate null class. Compare pre-stimulus accuracy with post-stimulus accuracy in the summary CSV/plots."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload decoding outputs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ inputs.output_prefix }}-outputs
+          path: outputs/
+          if-no-files-found: warn
