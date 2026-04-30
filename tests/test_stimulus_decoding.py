@@ -15,9 +15,7 @@ def _mat_data(labels, trial_values, time):
     trialinfo = np.empty((1, 1), dtype=object)
     trialinfo[0, 0] = np.asarray(labels, dtype=int)
     return {
-        "trial": cell_array(
-            [np.asarray([[0.0, value]], dtype=float) for value in trial_values]
-        ),
+        "trial": cell_array([np.asarray([[0.0, value]], dtype=float) for value in trial_values]),
         "time": cell_array([np.asarray([time], dtype=float) for _ in trial_values]),
         "trialinfo": trialinfo,
     }
@@ -48,9 +46,7 @@ class TestStimulusDecoding(unittest.TestCase):
                 {"data": np.array([validation_data], dtype=object)},
             ],
         ):
-            rows = evaluate_participant_time_resolved_stimulus_transfer(
-                "unused", 1, config=config
-            )
+            rows = evaluate_participant_time_resolved_stimulus_transfer("unused", 1, config=config)
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["variant"], "without_null")
@@ -72,19 +68,20 @@ class TestStimulusDecoding(unittest.TestCase):
             permutation_seed=0,
         )
 
-        with patch(
-            "pymegdec.stimulus_decoding.sio.loadmat",
-            side_effect=[
-                {"data": np.array([train_data], dtype=object)},
-                {"data": np.array([validation_data], dtype=object)},
-            ],
-        ), patch(
-            "pymegdec.stimulus_decoding._permutation_accuracy_curve",
-            return_value=np.array([0.0, 0.25, 0.5]),
+        with (
+            patch(
+                "pymegdec.stimulus_decoding.sio.loadmat",
+                side_effect=[
+                    {"data": np.array([train_data], dtype=object)},
+                    {"data": np.array([validation_data], dtype=object)},
+                ],
+            ),
+            patch(
+                "pymegdec.stimulus_decoding._permutation_accuracy_curve",
+                return_value=np.array([0.0, 0.25, 0.5]),
+            ),
         ):
-            rows = evaluate_participant_time_resolved_stimulus_transfer(
-                "unused", 1, config=config
-            )
+            rows = evaluate_participant_time_resolved_stimulus_transfer("unused", 1, config=config)
 
         self.assertEqual(rows[0]["n_permutations"], 3)
         self.assertAlmostEqual(rows[0]["permutation_p_value"], 0.25)

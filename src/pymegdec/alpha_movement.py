@@ -96,9 +96,7 @@ def sample_time_indices(time_vector, time_window, trajectory_step_s):
     if time_vector.size < 2:
         raise ValueError("Time vector must contain at least two samples.")
     tolerance = max(abs(float(np.median(np.diff(time_vector)))) * 1e-6, 1e-12)
-    window_indices = np.flatnonzero(
-        (time_vector >= start - tolerance) & (time_vector <= stop + tolerance)
-    )
+    window_indices = np.flatnonzero((time_vector >= start - tolerance) & (time_vector <= stop + tolerance))
     if window_indices.size == 0:
         raise ValueError(f"time_window {time_window} does not overlap the data.")
     if trajectory_step_s is None:
@@ -108,26 +106,16 @@ def sample_time_indices(time_vector, time_window, trajectory_step_s):
 
     first_time = max(start, float(time_vector[window_indices[0]]))
     last_time = min(stop, float(time_vector[window_indices[-1]]))
-    targets = np.arange(
-        first_time, last_time + trajectory_step_s / 2, trajectory_step_s
-    )
-    sampled = [
-        int(window_indices[np.argmin(np.abs(time_vector[window_indices] - target))])
-        for target in targets
-    ]
+    targets = np.arange(first_time, last_time + trajectory_step_s / 2, trajectory_step_s)
+    sampled = [int(window_indices[np.argmin(np.abs(time_vector[window_indices] - target))]) for target in targets]
     return np.unique(sampled)
 
 
 def _alpha_power(signal, time_vector, sample_indices, config):
     _sampling_rate(time_vector)
-    alpha_window, window_indices = compute_alpha_analytic_window(
-        signal, time_vector, config
-    )
+    alpha_window, window_indices = compute_alpha_analytic_window(signal, time_vector, config)
     relative_indices = np.array(
-        [
-            int(np.argmin(np.abs(window_indices - sample_index)))
-            for sample_index in sample_indices
-        ],
+        [int(np.argmin(np.abs(window_indices - sample_index))) for sample_index in sample_indices],
         dtype=int,
     )
     return np.abs(np.take(alpha_window, relative_indices, axis=-1)) ** 2
@@ -163,24 +151,16 @@ def _movement_values(centroid, projected, first, previous, previous_time, time_s
     projected_step = projected - previous["projected"]
     return {
         "displacement_mm": float(np.linalg.norm(centroid - first["centroid"])),
-        "projected_displacement_mm": float(
-            np.linalg.norm(projected - first["projected"])
-        ),
+        "projected_displacement_mm": float(np.linalg.norm(projected - first["projected"])),
         "speed_mm_per_s": speed,
         "projected_speed_mm_per_s": projected_speed,
-        "projected_direction_rad": float(
-            np.arctan2(projected_step[1], projected_step[0])
-        ),
+        "projected_direction_rad": float(np.arctan2(projected_step[1], projected_step[0])),
     }
 
 
 def _selected_geometry(data, trial_signal, channel_indices):
-    positions = np.take(
-        get_channel_positions(data, trial_signal.shape[0]), channel_indices, axis=0
-    )
-    channel_names = np.asarray(
-        get_channel_names(data, trial_signal.shape[0]), dtype=object
-    )[channel_indices]
+    positions = np.take(get_channel_positions(data, trial_signal.shape[0]), channel_indices, axis=0)
+    channel_names = np.asarray(get_channel_names(data, trial_signal.shape[0]), dtype=object)[channel_indices]
     return _MovementGeometry(
         channel_indices=channel_indices,
         channel_names=channel_names,
@@ -198,9 +178,7 @@ def _trajectory_row(context, geometry, weights, time_s, state):
         state.first = current
 
     row = {
-        "participant": (
-            context.participant_id if context.participant_id is not None else ""
-        ),
+        "participant": (context.participant_id if context.participant_id is not None else ""),
         "dataset": context.dataset,
         "trial": context.trial_idx,
         "trial_label": _trial_label(context.data, context.trial_idx),
@@ -248,13 +226,9 @@ def compute_alpha_movement_trajectory(
 
     config = config or AlphaMovementConfig()
     trial_signal = get_trial_signal(data, trial_idx)
-    channel_indices = _resolve_channel_indices(
-        data, channel_indices, config.location_pattern
-    )
+    channel_indices = _resolve_channel_indices(data, channel_indices, config.location_pattern)
     time_vector = get_time_vector(data, trial_idx)
-    sample_indices = sample_time_indices(
-        time_vector, config.time_window, config.trajectory_step_s
-    )
+    sample_indices = sample_time_indices(time_vector, config.time_window, config.trajectory_step_s)
     powers = _alpha_power(
         np.take(trial_signal, channel_indices, axis=0),
         time_vector,
@@ -287,9 +261,7 @@ def compute_alpha_movement(
     """Track alpha-power centroids for every trial in ``data``."""
 
     config = config or AlphaMovementConfig()
-    channel_indices = _resolve_channel_indices(
-        data, channel_indices, config.location_pattern
-    )
+    channel_indices = _resolve_channel_indices(data, channel_indices, config.location_pattern)
     rows = []
     for trial_idx in range(count_trials(data)):
         rows.extend(
@@ -337,36 +309,16 @@ def summarize_alpha_movement(rows):
                 "trial_label": trial_label,
                 "time_s": time_s,
                 "n_trials": len(trials),
-                "mean_alpha_power": _finite_mean(
-                    row["mean_alpha_power"] for row in group_rows
-                ),
-                "spatial_concentration": _finite_mean(
-                    row["spatial_concentration"] for row in group_rows
-                ),
-                "centroid_x_mm": _finite_mean(
-                    row["centroid_x_mm"] for row in group_rows
-                ),
-                "centroid_y_mm": _finite_mean(
-                    row["centroid_y_mm"] for row in group_rows
-                ),
-                "centroid_z_mm": _finite_mean(
-                    row["centroid_z_mm"] for row in group_rows
-                ),
-                "projected_x_mm": _finite_mean(
-                    row["projected_x_mm"] for row in group_rows
-                ),
-                "projected_y_mm": _finite_mean(
-                    row["projected_y_mm"] for row in group_rows
-                ),
-                "displacement_mm": _finite_mean(
-                    row["displacement_mm"] for row in group_rows
-                ),
-                "speed_mm_per_s": _finite_mean(
-                    row["speed_mm_per_s"] for row in group_rows
-                ),
-                "projected_speed_mm_per_s": _finite_mean(
-                    row["projected_speed_mm_per_s"] for row in group_rows
-                ),
+                "mean_alpha_power": _finite_mean(row["mean_alpha_power"] for row in group_rows),
+                "spatial_concentration": _finite_mean(row["spatial_concentration"] for row in group_rows),
+                "centroid_x_mm": _finite_mean(row["centroid_x_mm"] for row in group_rows),
+                "centroid_y_mm": _finite_mean(row["centroid_y_mm"] for row in group_rows),
+                "centroid_z_mm": _finite_mean(row["centroid_z_mm"] for row in group_rows),
+                "projected_x_mm": _finite_mean(row["projected_x_mm"] for row in group_rows),
+                "projected_y_mm": _finite_mean(row["projected_y_mm"] for row in group_rows),
+                "displacement_mm": _finite_mean(row["displacement_mm"] for row in group_rows),
+                "speed_mm_per_s": _finite_mean(row["speed_mm_per_s"] for row in group_rows),
+                "projected_speed_mm_per_s": _finite_mean(row["projected_speed_mm_per_s"] for row in group_rows),
             }
         )
     return summary_rows

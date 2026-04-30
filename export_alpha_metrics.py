@@ -14,15 +14,9 @@ from pymegdec.cli import (  # noqa: E402
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Export exploratory prestimulus alpha metrics to CSV."
-    )
-    parser.add_argument(
-        "--data-dir", default=None, help="Directory containing Part*Data.mat files."
-    )
-    parser.add_argument(
-        "--participant", type=int, required=True, help="Participant id to export."
-    )
+    parser = argparse.ArgumentParser(description="Export exploratory prestimulus alpha metrics to CSV.")
+    parser.add_argument("--data-dir", default=None, help="Directory containing Part*Data.mat files.")
+    parser.add_argument("--participant", type=int, required=True, help="Participant id to export.")
     parser.add_argument("--output", required=True, help="Output CSV path.")
     parser.add_argument(
         "--cue",

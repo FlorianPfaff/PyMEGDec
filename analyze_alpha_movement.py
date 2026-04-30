@@ -28,14 +28,9 @@ def _participants(value, data_dir, cue):
 
 def main():
     parser = argparse.ArgumentParser(
-        description=(
-            "Export sensor-level alpha movement trajectories. The trajectory is "
-            "a MEG sensor-array proxy, not source-localized brain movement."
-        )
+        description=("Export sensor-level alpha movement trajectories. The trajectory is " "a MEG sensor-array proxy, not source-localized brain movement.")
     )
-    parser.add_argument(
-        "--data-dir", default=None, help="Directory containing Part*Data.mat files."
-    )
+    parser.add_argument("--data-dir", default=None, help="Directory containing Part*Data.mat files.")
     parser.add_argument(
         "--participants",
         default=None,
@@ -83,10 +78,7 @@ def main():
 
     participants = _participants(args.participants, args.data_dir, args.cue)
     if not participants:
-        parser.error(
-            "No participants found. Pass --participants or configure a data "
-            "directory with matching MAT files."
-        )
+        parser.error("No participants found. Pass --participants or configure a data " "directory with matching MAT files.")
 
     config = AlphaMovementConfig(
         location_pattern=args.location_pattern,

@@ -43,9 +43,7 @@ class TestSyntheticData(unittest.TestCase):
     def test_cross_validate_single_dataset_runs_without_private_data(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             data_dir = Path(tmp_dir)
-            _write_synthetic_part_data(
-                data_dir, "Part2Data.mat", [1, 2, 1, 2, 1, 2, 1, 2]
-            )
+            _write_synthetic_part_data(data_dir, "Part2Data.mat", [1, 2, 1, 2, 1, 2, 1, 2])
 
             accuracy = cross_validate_single_dataset(
                 data_dir,
@@ -60,9 +58,7 @@ class TestSyntheticData(unittest.TestCase):
     def test_evaluate_model_transfer_runs_without_private_data(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             data_dir = Path(tmp_dir)
-            _write_synthetic_part_data(
-                data_dir, "Part2Data.mat", [1, 2, 1, 2, 1, 2, 1, 2]
-            )
+            _write_synthetic_part_data(data_dir, "Part2Data.mat", [1, 2, 1, 2, 1, 2, 1, 2])
             _write_synthetic_part_data(data_dir, "Part2CueData.mat", [1, 2, 1, 2])
 
             accuracy = evaluate_model_transfer(

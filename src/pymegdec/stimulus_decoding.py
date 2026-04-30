@@ -10,7 +10,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.io as sio
-
 from pymegdec.alpha_metrics import write_alpha_metrics_csv
 from pymegdec.classifiers import (
     get_default_classifier_param,
@@ -60,9 +59,7 @@ class StimulusDecodingConfig:
     permutation_seed: int | None = None
 
 
-def window_centers_from_range(
-    time_window: tuple[float, float], step_s: float
-) -> tuple[float, ...]:
+def window_centers_from_range(time_window: tuple[float, float], step_s: float) -> tuple[float, ...]:
     """Build evenly spaced window centers from a start/stop range."""
 
     start, stop = time_window
@@ -70,10 +67,7 @@ def window_centers_from_range(
         raise ValueError("Window step must be positive.")
     if start > stop:
         raise ValueError("Time window start must be before stop.")
-    return tuple(
-        float(value)
-        for value in np.round(np.arange(start, stop + step_s / 2, step_s), 10)
-    )
+    return tuple(float(value) for value in np.round(np.arange(start, stop + step_s / 2, step_s), 10))
 
 
 def evaluate_time_resolved_stimulus_transfer(
@@ -91,11 +85,7 @@ def evaluate_time_resolved_stimulus_transfer(
     for participant in participants:
         if progress is not None:
             progress(f"START participant={participant}")
-        rows.extend(
-            evaluate_participant_time_resolved_stimulus_transfer(
-                data_folder, participant, config=config
-            )
-        )
+        rows.extend(evaluate_participant_time_resolved_stimulus_transfer(data_folder, participant, config=config))
         if progress is not None:
             progress(f"DONE participant={participant}")
     return rows
@@ -125,10 +115,7 @@ def evaluate_participant_time_resolved_stimulus_transfer(
         labels_validation = labels_validation - 1
 
     if not np.array_equal(np.unique(labels_train), np.unique(labels_validation)):
-        warnings.warn(
-            "There are labels in the training or validation experiment "
-            "that are not in the other experiment."
-        )
+        warnings.warn("There are labels in the training or validation experiment " "that are not in the other experiment.")
 
     train_data = _prepare_data(train_data, config)
     validation_data = _prepare_data(validation_data, config)
@@ -263,29 +250,19 @@ def _evaluate_window(
 ):
     train_window = _centered_window(window_center, config.window_size)
     null_window = _null_window(config)
-    train_stimuli_features, train_null_features = extract_windows(
-        train_data, train_window, null_window
-    )
-    validation_stimuli_features, _ = extract_windows(
-        validation_data, train_window, (np.nan, np.nan)
-    )
+    train_stimuli_features, train_null_features = extract_windows(train_data, train_window, null_window)
+    validation_stimuli_features, _ = extract_windows(validation_data, train_window, (np.nan, np.nan))
     train_features = np.hstack(train_stimuli_features + train_null_features).T
     train_labels = labels_train
     if train_null_features:
-        train_labels = np.concatenate(
-            (labels_train, np.zeros(len(train_null_features), dtype=int))
-        )
+        train_labels = np.concatenate((labels_train, np.zeros(len(train_null_features), dtype=int)))
     validation_features = np.hstack(validation_stimuli_features).T
 
     pca_components = _actual_pca_components(config.components_pca, train_features)
     explained_variance = np.nan
     if config.components_pca != float("inf"):
-        train_features, coeff, train_features_mean, explained_variance = (
-            reduce_features_pca(train_features, int(config.components_pca))
-        )
-        validation_features = (
-            validation_features - train_features_mean
-        ) @ coeff[:, :pca_components]
+        train_features, coeff, train_features_mean, explained_variance = reduce_features_pca(train_features, int(config.components_pca))
+        validation_features = (validation_features - train_features_mean) @ coeff[:, :pca_components]
 
     model = train_multiclass_classifier(
         train_features,
@@ -312,14 +289,10 @@ def _evaluate_window(
         )
         permutation_p = float(np.mean(permutation_accuracy >= accuracy))
         if np.isfinite(permutation_p):
-            permutation_p = (permutation_p * config.permutations + 1.0) / (
-                config.permutations + 1.0
-            )
+            permutation_p = (permutation_p * config.permutations + 1.0) / (config.permutations + 1.0)
     chance_accuracy = 1.0 / config.chance_classes
     variant = "without_null" if np.isnan(config.null_window_center) else "with_null"
-    null_prediction_rate = (
-        float(np.mean(predictions == 0)) if variant == "with_null" else np.nan
-    )
+    null_prediction_rate = float(np.mean(predictions == 0)) if variant == "with_null" else np.nan
 
     return {
         "participant": participant,
@@ -339,16 +312,8 @@ def _evaluate_window(
         "n_permutations": int(config.permutations),
         "permutation_seed": config.permutation_seed,
         "permutation_p_value": permutation_p,
-        "permutation_accuracy_mean": (
-            float(np.mean(permutation_accuracy))
-            if permutation_accuracy.size
-            else np.nan
-        ),
-        "permutation_accuracy_std": (
-            float(np.std(permutation_accuracy, ddof=1))
-            if permutation_accuracy.size > 1
-            else np.nan
-        ),
+        "permutation_accuracy_mean": (float(np.mean(permutation_accuracy)) if permutation_accuracy.size else np.nan),
+        "permutation_accuracy_std": (float(np.std(permutation_accuracy, ddof=1)) if permutation_accuracy.size > 1 else np.nan),
         "null_window_center_s": config.null_window_center,
         "null_prediction_rate": null_prediction_rate,
         "classifier": config.classifier,

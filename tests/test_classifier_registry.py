@@ -69,12 +69,8 @@ class TestClassifierRegistry(unittest.TestCase):
                     self.assertEqual(len(predictions), len(self.labels))
 
     def test_random_state_reproduces_stochastic_classifier_predictions(self):
-        model_a = train_multiclass_classifier(
-            self.features, self.labels, "random-forest", 5, random_state=7
-        )
-        model_b = train_multiclass_classifier(
-            self.features, self.labels, "random-forest", 5, random_state=7
-        )
+        model_a = train_multiclass_classifier(self.features, self.labels, "random-forest", 5, random_state=7)
+        model_b = train_multiclass_classifier(self.features, self.labels, "random-forest", 5, random_state=7)
 
         np.testing.assert_array_equal(
             model_a.predict(self.features),

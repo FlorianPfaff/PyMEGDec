@@ -39,9 +39,7 @@ class TestReactionTimeAnalysis(unittest.TestCase):
             path = Path(temp_dir) / "rt.csv"
             write_csv_rows(rows, path)
 
-            loaded = load_reaction_time_csv(
-                path, ReactionTimeCsvConfig(default_participant=2)
-            )
+            loaded = load_reaction_time_csv(path, ReactionTimeCsvConfig(default_participant=2))
 
         self.assertEqual(loaded[0]["participant"], "2")
         self.assertEqual(loaded[0]["dataset"], "main")
@@ -56,15 +54,11 @@ class TestReactionTimeAnalysis(unittest.TestCase):
             ]
         )
 
-        rows = extract_reaction_times_from_data(
-            data, participant_id=5, trialinfo_rt_column=1
-        )
+        rows = extract_reaction_times_from_data(data, participant_id=5, trialinfo_rt_column=1)
 
         self.assertEqual([row["trial"] for row in rows], [0, 1, 2])
         self.assertEqual([row["participant"] for row in rows], ["5", "5", "5"])
-        np.testing.assert_allclose(
-            [row["reaction_time"] for row in rows], [0.41, 0.52, 0.63]
-        )
+        np.testing.assert_allclose([row["reaction_time"] for row in rows], [0.41, 0.52, 0.63])
 
     def test_extract_reaction_times_raises_when_absent(self):
         data = _synthetic_data([[1, 2, 3]])

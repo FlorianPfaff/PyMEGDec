@@ -28,12 +28,8 @@ def _participants(value, data_dir, cue):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Analyze prestimulus alpha metrics against reaction time."
-    )
-    parser.add_argument(
-        "--data-dir", default=None, help="Directory containing Part*Data.mat files."
-    )
+    parser = argparse.ArgumentParser(description="Analyze prestimulus alpha metrics against reaction time.")
+    parser.add_argument("--data-dir", default=None, help="Directory containing Part*Data.mat files.")
     parser.add_argument(
         "--participants",
         default=None,
@@ -44,17 +40,13 @@ def main():
         default=None,
         help="CSV containing participant, trial, and reaction_time columns.",
     )
-    parser.add_argument(
-        "--alpha-metrics", default=None, help="Optional precomputed alpha metrics CSV."
-    )
+    parser.add_argument("--alpha-metrics", default=None, help="Optional precomputed alpha metrics CSV.")
     parser.add_argument(
         "--joined-output",
         required=True,
         help="Output CSV for matched trial-level alpha/RT rows.",
     )
-    parser.add_argument(
-        "--summary-output", required=True, help="Output CSV for association summaries."
-    )
+    parser.add_argument("--summary-output", required=True, help="Output CSV for association summaries.")
     parser.add_argument(
         "--plots-dir",
         default=None,
@@ -82,9 +74,7 @@ def main():
         default=None,
         help="Reaction-time CSV participant column override.",
     )
-    parser.add_argument(
-        "--trial-column", default=None, help="Reaction-time CSV trial column override."
-    )
+    parser.add_argument("--trial-column", default=None, help="Reaction-time CSV trial column override.")
     parser.add_argument(
         "--reaction-time-column",
         default=None,
@@ -106,10 +96,7 @@ def main():
 
     participants = _participants(args.participants, args.data_dir, args.cue)
     if not participants and (not args.alpha_metrics or not args.reaction_times):
-        parser.error(
-            "No participants found. Pass --participants or configure a data "
-            "directory with matching MAT files."
-        )
+        parser.error("No participants found. Pass --participants or configure a data " "directory with matching MAT files.")
     default_participant = participants[0] if len(participants) == 1 else None
     alpha_config = alpha_metric_config_from_args(args)
     csv_config = ReactionTimeCsvConfig(
@@ -139,9 +126,7 @@ def main():
         config=export_config,
     )
     if args.plots_dir:
-        write_alpha_reaction_time_plots(
-            joined_rows, args.plots_dir, metrics=args.metrics
-        )
+        write_alpha_reaction_time_plots(joined_rows, args.plots_dir, metrics=args.metrics)
     print(f"Wrote {len(joined_rows)} matched trial rows to {args.joined_output}")
     print(f"Wrote {len(summary_rows)} summary rows to {args.summary_output}")
 
