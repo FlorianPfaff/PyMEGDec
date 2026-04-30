@@ -103,9 +103,7 @@ class TestAlphaMovementAnalysis(unittest.TestCase):
 
             self.assertEqual(len(effect_rows), len(loaded_effects))
             self.assertEqual(len(summary_rows), len(loaded_summary))
-            self.assertTrue(
-                (plots_dir / "alpha_movement_projected_trajectories.png").exists()
-            )
+            self.assertTrue((plots_dir / "alpha_movement_projected_trajectories.png").exists())
             self.assertTrue((plots_dir / "alpha_movement_projected_speed.png").exists())
             self.assertTrue((plots_dir / "alpha_movement_displacement.png").exists())
 
@@ -115,9 +113,7 @@ class TestAlphaMovementAnalysis(unittest.TestCase):
 
             write_alpha_movement_plots(self.rows, output_dir, plot_labels=("2",))
 
-            self.assertTrue(
-                (output_dir / "alpha_movement_projected_trajectories.png").exists()
-            )
+            self.assertTrue((output_dir / "alpha_movement_projected_trajectories.png").exists())
 
 
 if __name__ == "__main__":

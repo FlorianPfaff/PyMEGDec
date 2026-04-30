@@ -25,18 +25,10 @@ __all__ = [
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Cross-validate one participant dataset."
-    )
-    parser.add_argument(
-        "--data-dir", default=None, help="Directory containing Part*Data.mat files."
-    )
-    parser.add_argument(
-        "--participant", type=int, default=2, help="Participant id to evaluate."
-    )
+    parser = argparse.ArgumentParser(description="Cross-validate one participant dataset.")
+    parser.add_argument("--data-dir", default=None, help="Directory containing Part*Data.mat files.")
+    parser.add_argument("--participant", type=int, default=2, help="Participant id to evaluate.")
     args = parser.parse_args()
 
-    acc = cross_validate_single_dataset(
-        args.data_dir, args.participant, classifier="multiclass-svm", components_pca=100
-    )
+    acc = cross_validate_single_dataset(args.data_dir, args.participant, classifier="multiclass-svm", components_pca=100)
     print(acc)

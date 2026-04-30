@@ -51,10 +51,7 @@ def evaluate_model_transfer(
         raise ValueError("Sampling rate of the two experiments must match.")
 
     if not np.array_equal(np.unique(labels_train_exp), np.unique(labels_val_exp)):
-        warnings.warn(
-            "There are labels in the training or validation experiment "
-            "that are not in the other experiment."
-        )
+        warnings.warn("There are labels in the training or validation experiment " "that are not in the other experiment.")
 
     stimuli_features_train_exp, null_features_train_exp = preprocess_features(
         train_exp_data,
@@ -73,29 +70,20 @@ def evaluate_model_transfer(
         np.nan,
     )
 
-    features_train_exp = np.hstack(
-        stimuli_features_train_exp + null_features_train_exp
-    ).T
-    labels_train_exp = np.concatenate(
-        (labels_train_exp, np.zeros(len(null_features_train_exp), dtype=int))
-    )
+    features_train_exp = np.hstack(stimuli_features_train_exp + null_features_train_exp).T
+    labels_train_exp = np.concatenate((labels_train_exp, np.zeros(len(null_features_train_exp), dtype=int)))
 
     features_val_exp = np.hstack(stimuli_features_val_exp).T
 
     pca_components = None
     if components_pca != float("inf"):
-        features_train_exp, coeff, features_train_exp_mean, explained_variance = (
-            reduce_features_pca(
-                features_train_exp,
-                components_pca,
-            )
+        features_train_exp, coeff, features_train_exp_mean, explained_variance = reduce_features_pca(
+            features_train_exp,
+            components_pca,
         )
         pca_components = coeff[:, :components_pca]
         features_val_exp = (features_val_exp - features_train_exp_mean) @ pca_components
-        print(
-            "Explained Variance by "
-            f"{components_pca} components: {explained_variance:.2f}%"
-        )
+        print("Explained Variance by " f"{components_pca} components: {explained_variance:.2f}%")
 
     model = train_multiclass_classifier(
         features_train_exp,
@@ -135,9 +123,7 @@ def _get_classifier_coefficients(model):
                     coefficients = coefficients / transformer.scale_
             return coefficients
 
-    raise ValueError(
-        "Feature importance is only available for linear classifiers with coefficients."
-    )
+    raise ValueError("Feature importance is only available for linear classifiers with coefficients.")
 
 
 if __name__ == "__main__":

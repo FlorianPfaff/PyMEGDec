@@ -78,11 +78,7 @@ def select_channels(data, location_pattern=DEFAULT_OCCIPITAL_PATTERN):
     n_channels = get_trial_signal(data, 0).shape[0]
     pattern = re.compile(location_pattern)
     channel_names = get_channel_names(data, n_channels)
-    return [
-        index
-        for index, channel_name in enumerate(channel_names)
-        if pattern.search(channel_name)
-    ]
+    return [index for index, channel_name in enumerate(channel_names) if pattern.search(channel_name)]
 
 
 def project_sensor_positions(positions):
@@ -136,12 +132,8 @@ def _time_mask(time_vector, time_window):
     return mask
 
 
-def _phase_gradient_metrics(
-    phase, edge_indices, edge_vectors, edge_pinv, center_frequency
-):
-    phase_delta = np.angle(
-        np.exp(1j * (phase[edge_indices[:, 1], :] - phase[edge_indices[:, 0], :]))
-    )
+def _phase_gradient_metrics(phase, edge_indices, edge_vectors, edge_pinv, center_frequency):
+    phase_delta = np.angle(np.exp(1j * (phase[edge_indices[:, 1], :] - phase[edge_indices[:, 0], :])))
     gradients = edge_pinv @ phase_delta
     predicted_delta = edge_vectors @ gradients
     residual = np.angle(np.exp(1j * (phase_delta - predicted_delta)))
@@ -154,9 +146,7 @@ def _phase_gradient_metrics(
     speed_m_per_s = np.nan
     if np.any(valid):
         # alpha phase velocity = angular frequency / spatial angular frequency.
-        speed_m_per_s = np.nanmedian(
-            (2 * np.pi * center_frequency / gradient_norm[valid]) / 1000.0
-        )
+        speed_m_per_s = np.nanmedian((2 * np.pi * center_frequency / gradient_norm[valid]) / 1000.0)
 
     return {
         "phase_plane_fit": float(np.mean(fit)),

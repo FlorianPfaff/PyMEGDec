@@ -41,11 +41,7 @@ def extract_channels_by_location(data, location_pattern):
         list: List of indices of the channels matching the location pattern.
     """
     pattern = re.compile(location_pattern)
-    channel_indices = [
-        index
-        for index, channel_name in enumerate(_get_channel_names(data))
-        if pattern.match(channel_name)
-    ]
+    channel_indices = [index for index, channel_name in enumerate(_get_channel_names(data)) if pattern.match(channel_name)]
 
     return channel_indices
 
@@ -139,18 +135,14 @@ def extract_phases_and_channels(data, trial_idx, location_pattern):
     signals = []
     for channel_idx in channel_indices:
         signal_curr_chan = signal[channel_idx, :]
-        filtered_signal, phase = extract_alpha_signal_and_phase(
-            signal_curr_chan, sampling_rate
-        )
+        filtered_signal, phase = extract_alpha_signal_and_phase(signal_curr_chan, sampling_rate)
         phases.append(phase)
         signals.append(filtered_signal)
 
     return phases, channel_indices, time_vector, signals
 
 
-def show_bandpass_filtered_signals(
-    data, trial_idx=0, time_window=(0, 1), location_pattern=r"^M.O..$"
-):
+def show_bandpass_filtered_signals(data, trial_idx=0, time_window=(0, 1), location_pattern=r"^M.O..$"):
     """
     Visualizes the alpha signal for a specific trial and extracts the phase.
 
@@ -160,9 +152,7 @@ def show_bandpass_filtered_signals(
         time_window (tuple): The time window (start, end) to visualize in seconds.
         location_pattern (str): The regex pattern for the desired location channels.
     """
-    phases, channel_indices, time_vector, signals = extract_phases_and_channels(
-        data, trial_idx, location_pattern
-    )
+    phases, channel_indices, time_vector, signals = extract_phases_and_channels(data, trial_idx, location_pattern)
     plot_all_alpha_signals(time_vector, signals, channel_indices, time_window)
     return phases, channel_indices
 
@@ -176,9 +166,7 @@ def visualize_phase_shifts(data, trial_idx=0, location_pattern=r"^M.O..$"):
         trial_idx (int): The index of the trial to visualize.
         location_pattern (str): The regex pattern for the desired location channels.
     """
-    phases, channel_indices, _, _ = extract_phases_and_channels(
-        data, trial_idx, location_pattern
-    )
+    phases, channel_indices, _, _ = extract_phases_and_channels(data, trial_idx, location_pattern)
     phase_diffs = calculate_phase_differences(phases)
     plot_phase_differences(phase_diffs, channel_indices)
 

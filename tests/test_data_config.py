@@ -22,9 +22,7 @@ class TestResolveDataFolder(unittest.TestCase):
     def test_env_var_is_used_without_explicit_argument(self):
         with tempfile.TemporaryDirectory() as env_dir:
             with patch.dict(os.environ, {DATA_DIR_ENV_VAR: env_dir}):
-                with patch(
-                    "pymegdec.data_config._read_local_data_dir_file", return_value=None
-                ):
+                with patch("pymegdec.data_config._read_local_data_dir_file", return_value=None):
                     self.assertEqual(
                         resolve_data_folder(),
                         str(Path(env_dir).resolve()),

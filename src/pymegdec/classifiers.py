@@ -107,9 +107,7 @@ def _build_xgboost(_features, _labels, classifier_param, random_state):
     try:
         import xgboost as xgb
     except ImportError as exc:
-        raise ImportError(
-            "Install PyMEGDec with the xgboost extra to use classifier='xgboost'."
-        ) from exc
+        raise ImportError("Install PyMEGDec with the xgboost extra to use classifier='xgboost'.") from exc
 
     return xgb.XGBClassifier(
         n_estimators=int(classifier_param),
@@ -160,10 +158,7 @@ def train_multiclass_classifier(
         classifier_spec = CLASSIFIER_REGISTRY[classifier]
     except KeyError as exc:
         supported_classifiers = ", ".join(sorted(CLASSIFIER_REGISTRY))
-        raise ValueError(
-            f"Unsupported classifier: {classifier}. "
-            f"Supported classifiers: {supported_classifiers}"
-        ) from exc
+        raise ValueError(f"Unsupported classifier: {classifier}. " f"Supported classifiers: {supported_classifiers}") from exc
 
     model = classifier_spec.builder(features, labels, classifier_param, random_state)
     if classifier_spec.fits_in_builder:
@@ -178,9 +173,7 @@ def _train_pytorch_mlp(features, labels, classifier_param, random_state=None):
         _seed_pytorch_training(random_seed)
 
     model = _build_pytorch_mlp(features, labels, classifier_param)
-    train_loader, val_loader = _build_pytorch_data_loaders(
-        features, labels, random_seed=random_seed
-    )
+    train_loader, val_loader = _build_pytorch_data_loaders(features, labels, random_seed=random_seed)
     trainer = _build_pytorch_trainer(classifier_param, random_seed=random_seed)
     trainer.fit(model, train_loader, val_loader)
     return model
@@ -199,9 +192,7 @@ def _seed_pytorch_training(random_seed):
     try:
         import pytorch_lightning as pl
     except ImportError as exc:
-        raise ImportError(
-            "Install PyMEGDec with the torch extra to use classifier='pytorch-mlp'."
-        ) from exc
+        raise ImportError("Install PyMEGDec with the torch extra to use classifier='pytorch-mlp'.") from exc
 
     pl.seed_everything(random_seed, workers=True)
 
@@ -210,9 +201,7 @@ def _build_pytorch_mlp(features, labels, classifier_param):
     try:
         from pymegdec.torch_models import MLPClassifierTorch
     except ImportError as exc:
-        raise ImportError(
-            "Install PyMEGDec with the torch extra to use classifier='pytorch-mlp'."
-        ) from exc
+        raise ImportError("Install PyMEGDec with the torch extra to use classifier='pytorch-mlp'.") from exc
 
     return MLPClassifierTorch(
         features.shape[1],
@@ -227,18 +216,12 @@ def _build_pytorch_data_loaders(features, labels, *, random_seed=None):
     try:
         import torch
     except ImportError as exc:
-        raise ImportError(
-            "Install PyMEGDec with the torch extra to use classifier='pytorch-mlp'."
-        ) from exc
+        raise ImportError("Install PyMEGDec with the torch extra to use classifier='pytorch-mlp'.") from exc
 
-    train_dataset, val_dataset = _split_pytorch_dataset(
-        torch, features, labels, random_seed
-    )
+    train_dataset, val_dataset = _split_pytorch_dataset(torch, features, labels, random_seed)
     train_generator = _build_torch_generator(torch, random_seed)
     return (
-        torch.utils.data.DataLoader(
-            train_dataset, batch_size=8, shuffle=True, generator=train_generator
-        ),
+        torch.utils.data.DataLoader(train_dataset, batch_size=8, shuffle=True, generator=train_generator),
         torch.utils.data.DataLoader(val_dataset, batch_size=8, shuffle=False),
     )
 
@@ -251,9 +234,7 @@ def _split_pytorch_dataset(torch, features, labels, random_seed):
     train_size = int(0.8 * len(full_dataset))
     val_size = len(full_dataset) - train_size
     split_generator = _build_torch_generator(torch, random_seed)
-    return torch.utils.data.random_split(
-        full_dataset, [train_size, val_size], generator=split_generator
-    )
+    return torch.utils.data.random_split(full_dataset, [train_size, val_size], generator=split_generator)
 
 
 def _build_torch_generator(torch, random_seed):
@@ -269,9 +250,7 @@ def _build_pytorch_trainer(classifier_param, *, random_seed=None):
     try:
         import pytorch_lightning as pl
     except ImportError as exc:
-        raise ImportError(
-            "Install PyMEGDec with the torch extra to use classifier='pytorch-mlp'."
-        ) from exc
+        raise ImportError("Install PyMEGDec with the torch extra to use classifier='pytorch-mlp'.") from exc
 
     return pl.Trainer(
         max_epochs=int(classifier_param["max_epochs"]),

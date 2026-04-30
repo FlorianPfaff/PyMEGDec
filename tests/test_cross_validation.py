@@ -74,10 +74,7 @@ class TestCrossValidateSingleDataset(unittest.TestCase):
 class TestCrossValidateSingleDatasetSynthetic(unittest.TestCase):
     def test_cross_validate_single_dataset_without_null_window(self):
         labels = np.array([1, 2, 1, 2])
-        stimuli_features = [
-            np.array([[index], [index + 1]], dtype=float)
-            for index in range(len(labels))
-        ]
+        stimuli_features = [np.array([[index], [index + 1]], dtype=float) for index in range(len(labels))]
 
         with (
             patch(

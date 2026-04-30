@@ -51,10 +51,7 @@ def cross_validate_single_dataset(
     )
     all_features = np.hstack(stimuli_features + null_features)
 
-    fold = np.ceil(
-        np.arange(1, data["trial"][0].shape[1] + 1)
-        / (data["trial"][0].shape[1] / n_folds)
-    ).astype(int)
+    fold = np.ceil(np.arange(1, data["trial"][0].shape[1] + 1) / (data["trial"][0].shape[1] / n_folds)).astype(int)
     fold_aug = fold
     if null_features:
         fold_aug = np.concatenate((fold, fold))
@@ -68,19 +65,12 @@ def cross_validate_single_dataset(
         test_features = all_features[:, test_mask].T
 
         if components_pca != float("inf"):
-            train_features, coeff, train_feature_mean, explained_variance = (
-                reduce_features_pca(
-                    train_features,
-                    components_pca,
-                )
+            train_features, coeff, train_feature_mean, explained_variance = reduce_features_pca(
+                train_features,
+                components_pca,
             )
-            print(
-                "Explained Variance by "
-                f"{components_pca} components: {explained_variance:.2f}%"
-            )
-            test_features = (test_features - train_feature_mean) @ coeff[
-                :, :components_pca
-            ]
+            print("Explained Variance by " f"{components_pca} components: {explained_variance:.2f}%")
+            test_features = (test_features - train_feature_mean) @ coeff[:, :components_pca]
 
         if classifier in ["gradient-boosting", "lasso", "svm-binary"]:
             all_pred = np.zeros((test_features.shape[0], n_stim))
@@ -122,11 +112,7 @@ def cross_validate_single_dataset(
             pred_lbl[fold == f] = model.predict(test_features)
 
     if np.all(pred_lbl == 0):
-        print(
-            "All predictions are the null-class. Replace them to be fair with "
-            "the binary classifiers for which one always decides on a label "
-            "unequal to 0. Using 1."
-        )
+        print("All predictions are the null-class. Replace them to be fair with " "the binary classifiers for which one always decides on a label " "unequal to 0. Using 1.")
         pred_lbl[pred_lbl == 0] = 1
     elif np.any(pred_lbl == 0):
         print(

@@ -33,9 +33,7 @@ def get_trial_signal(data, trial_idx=0):
     return np.asarray(trial_signal, dtype=float)
 
 
-def bandpass_filter_signal(
-    signal_values, sampling_rate, lowcut=8.0, highcut=12.0, order=5
-):
+def bandpass_filter_signal(signal_values, sampling_rate, lowcut=8.0, highcut=12.0, order=5):
     nyquist = 0.5 * sampling_rate
     if lowcut <= 0 or highcut <= 0:
         raise ValueError("Cutoff frequencies must be positive.")
@@ -54,12 +52,8 @@ def bandpass_filter_signal(
     return scipy.signal.sosfiltfilt(sos, signal_values)
 
 
-def extract_alpha_signal_and_phase(
-    signal_values, sampling_rate, lowcut=8.0, highcut=12.0
-):
-    filtered_signal = bandpass_filter_signal(
-        signal_values, sampling_rate, lowcut, highcut
-    )
+def extract_alpha_signal_and_phase(signal_values, sampling_rate, lowcut=8.0, highcut=12.0):
+    filtered_signal = bandpass_filter_signal(signal_values, sampling_rate, lowcut, highcut)
     analytic_signal = scipy.signal.hilbert(filtered_signal)
     return filtered_signal, np.angle(analytic_signal)
 
@@ -78,9 +72,7 @@ def extract_phase(signal_values, sampling_rate, lowcut=8.0, highcut=12.0):
     Returns:
         numpy array: The phase of the filtered signal.
     """
-    _, phase = extract_alpha_signal_and_phase(
-        signal_values, sampling_rate, lowcut, highcut
-    )
+    _, phase = extract_alpha_signal_and_phase(signal_values, sampling_rate, lowcut, highcut)
     return phase
 
 
@@ -139,9 +131,7 @@ if __name__ == "__main__":
     demo_data = sio.loadmat(f"{demo_data_folder}/Part{demo_part}Data.mat")["data"][0]
 
     # Extract the robust time basis for channels 187 to 198 for a specific trial
-    demo_time_basis = extract_time_basis(
-        demo_data, trial_idx=0, channel_range=(187, 198)
-    )
+    demo_time_basis = extract_time_basis(demo_data, trial_idx=0, channel_range=(187, 198))
 
     # Display the time basis
     print("Robust time basis (average phase):", demo_time_basis)

@@ -43,13 +43,7 @@ class TestClassifiers(unittest.TestCase):
             [
                 sys.executable,
                 "-c",
-                (
-                    "import sys; "
-                    "import pymegdec.classifiers; "
-                    "print('xgboost' in sys.modules, "
-                    "'torch' in sys.modules, "
-                    "'pytorch_lightning' in sys.modules)"
-                ),
+                ("import sys; " "import pymegdec.classifiers; " "print('xgboost' in sys.modules, " "'torch' in sys.modules, " "'pytorch_lightning' in sys.modules)"),
             ],
             check=True,
             capture_output=True,

@@ -78,9 +78,7 @@ class TestAlphaChannelMethods(unittest.TestCase):
         time_window = (0, 1)
         location_pattern = r"^M.O..$"
 
-        phases, _ = show_bandpass_filtered_signals(
-            self.data, trial_idx, time_window, location_pattern
-        )
+        phases, _ = show_bandpass_filtered_signals(self.data, trial_idx, time_window, location_pattern)
         self.assertEqual(len(phases), 12)
         self.assertEqual(phases[0].shape, get_time_vector(self.data, trial_idx).shape)
         mock_show.assert_called_once()
@@ -90,9 +88,7 @@ class TestAlphaChannelMethods(unittest.TestCase):
         trial_idx = 0
         location_pattern = r"^M.O..$"
 
-        self.assertIsNone(
-            visualize_phase_shifts(self.data, trial_idx, location_pattern)
-        )
+        self.assertIsNone(visualize_phase_shifts(self.data, trial_idx, location_pattern))
         mock_show.assert_called_once()
 
     def test_calculate_phase_differences_wraps_angles(self):

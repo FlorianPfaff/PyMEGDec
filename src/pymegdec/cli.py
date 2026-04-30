@@ -68,9 +68,7 @@ def _parse_classifier_param(value: str | None):
     try:
         return float(normalized)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            "classifier parameters must be numeric, JSON, or a Python literal"
-        ) from exc
+        raise argparse.ArgumentTypeError("classifier parameters must be numeric, JSON, or a Python literal") from exc
 
 
 def _parse_float_list(value: str) -> tuple[float, ...]:
@@ -87,12 +85,8 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Directory containing Part*Data.mat files.",
     )
-    parser.add_argument(
-        "--participant", type=int, default=2, help="Participant id to evaluate."
-    )
-    parser.add_argument(
-        "--window-size", type=float, default=0.1, help="Window size in seconds."
-    )
+    parser.add_argument("--participant", type=int, default=2, help="Participant id to evaluate.")
+    parser.add_argument("--window-size", type=float, default=0.1, help="Window size in seconds.")
     parser.add_argument(
         "--train-window-center",
         type=float,
@@ -111,9 +105,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         default=float("inf"),
         help="Target frame rate, or inf.",
     )
-    parser.add_argument(
-        "--classifier", default="multiclass-svm", help="Classifier name."
-    )
+    parser.add_argument("--classifier", default="multiclass-svm", help="Classifier name.")
     parser.add_argument(
         "--classifier-param",
         default=None,
@@ -149,20 +141,14 @@ def _common_kwargs(args: argparse.Namespace) -> dict:
 
 
 def _build_cross_validate_parser(prog: str | None = None) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog=prog, description="Cross-validate one participant dataset."
-    )
+    parser = argparse.ArgumentParser(prog=prog, description="Cross-validate one participant dataset.")
     _add_common_args(parser)
-    parser.add_argument(
-        "--folds", type=int, default=10, help="Number of cross-validation folds."
-    )
+    parser.add_argument("--folds", type=int, default=10, help="Number of cross-validation folds.")
     return parser
 
 
 def _build_transfer_parser(prog: str | None = None) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog=prog, description="Evaluate model transfer for one participant."
-    )
+    parser = argparse.ArgumentParser(prog=prog, description="Evaluate model transfer for one participant.")
     _add_common_args(parser)
     return parser
 
@@ -183,10 +169,7 @@ def _build_stimulus_decoding_parser(
     parser.add_argument(
         "--participants",
         default=None,
-        help=(
-            "Participant ids such as 1-4,6,8. Defaults to all participants "
-            "with main and cue files."
-        ),
+        help=("Participant ids such as 1-4,6,8. Defaults to all participants " "with main and cue files."),
     )
     parser.add_argument(
         "--output",
@@ -213,10 +196,7 @@ def _build_stimulus_decoding_parser(
         "--window-centers",
         type=_parse_float_list,
         default=None,
-        help=(
-            "Explicit comma-separated window centers in seconds. Overrides "
-            "--time-window."
-        ),
+        help=("Explicit comma-separated window centers in seconds. Overrides " "--time-window."),
     )
     parser.add_argument(
         "--window-step-s",
@@ -242,9 +222,7 @@ def _build_stimulus_decoding_parser(
         default=float("inf"),
         help="Target frame rate, or inf.",
     )
-    parser.add_argument(
-        "--classifier", default="multiclass-svm", help="Classifier name."
-    )
+    parser.add_argument("--classifier", default="multiclass-svm", help="Classifier name.")
     parser.add_argument(
         "--classifier-param",
         default=None,
@@ -274,10 +252,7 @@ def _build_stimulus_decoding_parser(
         "--permutations",
         type=int,
         default=0,
-        help=(
-            "Number of label shuffles per participant window for "
-            "permutation p-values."
-        ),
+        help=("Number of label shuffles per participant window for " "permutation p-values."),
     )
     parser.add_argument(
         "--permutation-seed",
@@ -326,10 +301,7 @@ def stimulus_decoding(argv: Sequence[str] | None = None, prog: str | None = None
     args = parser.parse_args(argv)
     participants = _transfer_participants(args.participants, args.data_folder)
     if not participants:
-        parser.error(
-            "No participants found. Pass --participants or configure a data "
-            "directory with matching main and cue MAT files."
-        )
+        parser.error("No participants found. Pass --participants or configure a data " "directory with matching main and cue MAT files.")
     window_centers = args.window_centers
     if window_centers is None:
         window_centers = window_centers_from_range(args.time_window, args.window_step_s)
@@ -368,9 +340,7 @@ def stimulus_decoding(argv: Sequence[str] | None = None, prog: str | None = None
 def _build_alpha_movement_results_parser(
     prog: str | None = None,
 ) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog=prog, description="Analyze exported alpha movement summaries."
-    )
+    parser = argparse.ArgumentParser(prog=prog, description="Analyze exported alpha movement summaries.")
     parser.add_argument(
         "--movement-summary",
         required=True,
@@ -412,19 +382,13 @@ def _build_alpha_movement_results_parser(
     return parser
 
 
-def alpha_movement_results(
-    argv: Sequence[str] | None = None, prog: str | None = None
-) -> int:
+def alpha_movement_results(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
     parser = _build_alpha_movement_results_parser(prog=prog)
     args = parser.parse_args(argv)
     config = AlphaMovementAnalysisConfig(
         pre_window=args.pre_window,
         post_window=args.post_window,
-        plot_labels=(
-            None
-            if args.plot_labels is None
-            else tuple(str(label) for label in args.plot_labels)
-        ),
+        plot_labels=(None if args.plot_labels is None else tuple(str(label) for label in args.plot_labels)),
     )
     effect_rows, summary_rows = export_alpha_movement_analysis(
         args.movement_summary,
@@ -433,13 +397,8 @@ def alpha_movement_results(
         plots_dir=args.plots_dir,
         config=config,
     )
-    print(
-        f"Wrote {len(effect_rows)} participant-condition rows to {args.effect_output}"
-    )
-    print(
-        f"Wrote {len(summary_rows)} condition summary rows to "
-        f"{args.condition_summary_output}"
-    )
+    print(f"Wrote {len(effect_rows)} participant-condition rows to {args.effect_output}")
+    print(f"Wrote {len(summary_rows)} condition summary rows to " f"{args.condition_summary_output}")
     return 0
 
 

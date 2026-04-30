@@ -39,9 +39,7 @@ class TestMLPClassifierTorch(unittest.TestCase):
         )
 
     def _labels_by_loader(self, loaders):
-        return [
-            [batch_labels.tolist() for _, batch_labels in loader] for loader in loaders
-        ]
+        return [[batch_labels.tolist() for _, batch_labels in loader] for loader in loaders]
 
 
 if __name__ == "__main__":
