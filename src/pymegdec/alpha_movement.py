@@ -6,7 +6,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 import numpy as np
-
 from pymegdec.alpha_metrics import (
     DEFAULT_FREQUENCY_RANGE,
     compute_alpha_analytic_window,
