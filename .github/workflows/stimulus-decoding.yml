@@ -16,10 +16,20 @@ on:
         required: true
         default: "3.13"
         type: string
-      data_dir:
-        description: Directory containing Part*Data.mat and Part*CueData.mat files.
+      use_nextcloud_data:
+        description: Download/cache the MEG data from the secret MEG_DATA_ALL before running.
         required: true
-        default: MEG-Data
+        default: true
+        type: boolean
+      data_cache_version:
+        description: Bump this value, e.g. v2, to force a fresh Nextcloud download/cache.
+        required: true
+        default: v1
+        type: string
+      data_dir:
+        description: Data directory to use or populate. For Nextcloud downloads, this is the cache target directory.
+        required: true
+        default: .cache/meg-data-all
         type: string
       participants:
         description: Participant ids, e.g. 1-4,6,8. Leave empty to auto-detect participants with main and cue files.
@@ -97,7 +107,7 @@ on:
         default: stimulus_decoding
         type: string
       fail_if_missing_data:
-        description: Fail if data_dir does not exist.
+        description: Fail if data_dir does not exist after optional Nextcloud download/cache restore.
         required: true
         default: true
         type: boolean
@@ -113,6 +123,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Restore cached MEG data
+        id: meg-data-cache
+        if: ${{ inputs.use_nextcloud_data }}
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ inputs.data_dir }}
+          key: meg-data-all-${{ runner.os }}-${{ inputs.data_cache_version }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -130,28 +148,138 @@ jobs:
             python -m pip install -e ".[${{ inputs.install_extra }}]"
           fi
 
-      - name: Validate data directory
+      - name: Download MEG data from Nextcloud
+        if: ${{ inputs.use_nextcloud_data && steps.meg-data-cache.outputs.cache-hit != 'true' }}
         shell: bash
         env:
+          MEG_DATA_ALL: ${{ secrets.MEG_DATA_ALL }}
           DATA_DIR: ${{ inputs.data_dir }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${MEG_DATA_ALL:-}" ]]; then
+            echo "The MEG_DATA_ALL repository secret is empty or unavailable." >&2
+            exit 1
+          fi
+
+          rm -rf "${DATA_DIR}"
+          mkdir -p "${DATA_DIR}"
+
+          python - <<'PY'
+          from __future__ import annotations
+
+          import os
+          import shutil
+          import sys
+          import urllib.request
+          import zipfile
+          from pathlib import Path
+
+          def safe_extract(zip_file: zipfile.ZipFile, target_dir: Path) -> None:
+              target_dir = target_dir.resolve()
+              for member in zip_file.infolist():
+                  destination = (target_dir / member.filename).resolve()
+                  if not str(destination).startswith(str(target_dir) + os.sep) and destination != target_dir:
+                      raise RuntimeError(f"Refusing unsafe ZIP member: {member.filename}")
+              zip_file.extractall(target_dir)
+
+          share_url = os.environ["MEG_DATA_ALL"].strip().rstrip("/")
+          target_dir = Path(os.environ["DATA_DIR"])
+          archive_path = Path(os.environ["RUNNER_TEMP"]) / "meg-data-all.zip"
+          download_url = f"{share_url}/download"
+
+          request = urllib.request.Request(
+              download_url,
+              headers={"User-Agent": "PyMEGDec-GitHub-Actions"},
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=120) as response, archive_path.open("wb") as output:
+                  shutil.copyfileobj(response, output, length=1024 * 1024)
+          except Exception as exc:  # noqa: BLE001
+              raise RuntimeError(
+                  "Could not download MEG data from the Nextcloud share stored in MEG_DATA_ALL. "
+                  "Check that the public share allows downloads and is not password-protected."
+              ) from exc
+
+          if not zipfile.is_zipfile(archive_path):
+              raise RuntimeError(
+                  "The downloaded Nextcloud payload is not a ZIP archive. "
+                  "This usually means the share URL does not permit direct folder download."
+              )
+
+          with zipfile.ZipFile(archive_path) as zip_file:
+              safe_extract(zip_file, target_dir)
+
+          archive_path.unlink(missing_ok=True)
+          print(f"Downloaded and extracted MEG data into {target_dir}.")
+          PY
+
+      - name: Resolve and validate data directory
+        shell: bash
+        env:
+          DATA_DIR_INPUT: ${{ inputs.data_dir }}
           FAIL_IF_MISSING_DATA: ${{ inputs.fail_if_missing_data }}
         run: |
           set -euo pipefail
-          if [[ -d "${DATA_DIR}" ]]; then
-            echo "Using data directory: ${DATA_DIR}"
-            find "${DATA_DIR}" -maxdepth 1 -type f \( -name 'Part*Data.mat' -o -name 'Part*CueData.mat' \) | sort | head -40
-          elif [[ "${FAIL_IF_MISSING_DATA}" == "true" ]]; then
-            echo "Data directory does not exist: ${DATA_DIR}" >&2
-            echo "Use a self-hosted runner with the data available at data_dir, or check out/copy the data into the runner workspace before this step." >&2
-            exit 1
-          else
-            echo "Data directory does not exist, but fail_if_missing_data=false: ${DATA_DIR}"
-          fi
+          python - <<'PY'
+          from __future__ import annotations
+
+          import os
+          import sys
+          from pathlib import Path
+
+          root = Path(os.environ["DATA_DIR_INPUT"]).expanduser()
+          fail_if_missing = os.environ["FAIL_IF_MISSING_DATA"].lower() == "true"
+
+          if not root.exists():
+              message = f"Data directory does not exist: {root}"
+              if fail_if_missing:
+                  raise SystemExit(message)
+              print(message)
+              with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as env_file:
+                  env_file.write(f"PYMEGDEC_ANALYSIS_DATA_DIR={root}\n")
+              raise SystemExit(0)
+
+          candidate_counts: dict[Path, tuple[int, int]] = {}
+          for main_file in root.rglob("Part*Data.mat"):
+              directory = main_file.parent
+              main_count, cue_count = candidate_counts.get(directory, (0, 0))
+              candidate_counts[directory] = (main_count + 1, cue_count)
+          for cue_file in root.rglob("Part*CueData.mat"):
+              directory = cue_file.parent
+              main_count, cue_count = candidate_counts.get(directory, (0, 0))
+              candidate_counts[directory] = (main_count, cue_count + 1)
+
+          valid_candidates = [
+              (directory, counts)
+              for directory, counts in candidate_counts.items()
+              if counts[0] > 0 and counts[1] > 0
+          ]
+          if not valid_candidates:
+              message = f"No directory containing both Part*Data.mat and Part*CueData.mat was found under {root}."
+              if fail_if_missing:
+                  raise SystemExit(message)
+              print(message)
+              resolved = root
+          else:
+              resolved, counts = max(valid_candidates, key=lambda item: (item[1][0] + item[1][1], str(item[0])))
+              print(f"Resolved MEG data directory: {resolved}")
+              print(f"Found {counts[0]} main MAT files and {counts[1]} cue MAT files in the resolved directory.")
+
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as env_file:
+              env_file.write(f"PYMEGDEC_ANALYSIS_DATA_DIR={resolved}\n")
+          PY
+
+      - name: Save MEG data cache
+        if: ${{ inputs.use_nextcloud_data && steps.meg-data-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: ${{ inputs.data_dir }}
+          key: meg-data-all-${{ runner.os }}-${{ inputs.data_cache_version }}
 
       - name: Run 16-way time-resolved stimulus decoding
         shell: bash
         env:
-          DATA_DIR: ${{ inputs.data_dir }}
           PARTICIPANTS: ${{ inputs.participants }}
           TIME_WINDOW: ${{ inputs.time_window }}
           WINDOW_STEP_S: ${{ inputs.window_step_s }}
@@ -175,7 +303,7 @@ jobs:
 
           cmd=(
             pymegdec-stimulus-decoding
-            --data-dir "${DATA_DIR}"
+            --data-dir "${PYMEGDEC_ANALYSIS_DATA_DIR}"
             --output "${output_csv}"
             --summary-output "${summary_csv}"
             --plots-dir "${plots_dir}"
@@ -207,7 +335,7 @@ jobs:
           {
             echo "# Stimulus decoding run"
             echo
-            echo "- Data directory: \`${DATA_DIR}\`"
+            echo "- Data directory: \`${PYMEGDEC_ANALYSIS_DATA_DIR}\`"
             echo "- Participants: \`${PARTICIPANTS:-auto-detected}\`"
             echo "- Time-window centers: \`${TIME_WINDOW}\`"
             echo "- Window step: \`${WINDOW_STEP_S}\` s"
