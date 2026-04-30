@@ -4,7 +4,6 @@ from pathlib import Path
 
 import numpy as np
 import scipy.io as sio
-
 from pymegdec.cross_validation import cross_validate_single_dataset
 from pymegdec.model_transfer import evaluate_model_transfer
 
