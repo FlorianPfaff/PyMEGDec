@@ -12,6 +12,7 @@ env:
   DATA_CACHE_VERSION: v1
   DATA_DIR: .cache/meg-data-all
   PARTICIPANTS: ""
+  PARTICIPANT_BATCHES: "1-4;6,8,9,10;13-16;17-20;21-27"
   TIME_WINDOW: "-0.4,0.8"
   WINDOW_STEP_S: "0.025"
   WINDOW_SIZE: "0.1"
@@ -28,10 +29,56 @@ env:
   FAIL_IF_MISSING_DATA: "true"
 
 jobs:
+  prepare-batches:
+    name: Prepare participant batches
+    runs-on: ubuntu-latest
+    outputs:
+      batches: ${{ steps.batches.outputs.batches }}
+
+    steps:
+      - name: Build batch matrix
+        id: batches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          raw_batches = os.environ.get("PARTICIPANT_BATCHES", "").strip()
+          fallback = os.environ.get("PARTICIPANTS", "").strip()
+          if raw_batches:
+              chunks = [chunk.strip() for chunk in re.split(r"[;\n]+", raw_batches) if chunk.strip()]
+          elif fallback:
+              chunks = [fallback]
+          else:
+              chunks = [""]
+
+          batches = []
+          for index, participants in enumerate(chunks, start=1):
+              label = participants or "auto"
+              slug = re.sub(r"[^A-Za-z0-9]+", "-", label).strip("-").lower() or "auto"
+              batches.append({"batch_id": f"{index:02d}-{slug[:48]}", "participants": participants})
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"batches={json.dumps(batches)}\n")
+          print(json.dumps(batches, indent=2))
+          PY
+
   stimulus-decoding:
-    name: Run stimulus decoding
+    name: Run stimulus decoding (${{ matrix.batch_id }})
+    needs: prepare-batches
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include: ${{ fromJSON(needs.prepare-batches.outputs.batches) }}
 
     steps:
       - name: Check out repository
@@ -188,13 +235,17 @@ jobs:
 
       - name: Run 16-way time-resolved stimulus decoding
         shell: bash
+        env:
+          BATCH_ID: ${{ matrix.batch_id }}
+          BATCH_PARTICIPANTS: ${{ matrix.participants }}
         run: |
           set -euo pipefail
           mkdir -p outputs
 
-          output_csv="outputs/${OUTPUT_PREFIX}.csv"
-          summary_csv="outputs/${OUTPUT_PREFIX}_summary.csv"
-          plots_dir="outputs/${OUTPUT_PREFIX}_plots"
+          output_prefix="${OUTPUT_PREFIX}_${BATCH_ID}"
+          output_csv="outputs/${output_prefix}.csv"
+          summary_csv="outputs/${output_prefix}_summary.csv"
+          plots_dir="outputs/${output_prefix}_plots"
 
           cmd=(
             pymegdec-stimulus-decoding
@@ -214,8 +265,8 @@ jobs:
             --permutation-seed "${PERMUTATION_SEED}"
           )
 
-          if [[ -n "${PARTICIPANTS}" ]]; then
-            cmd+=(--participants "${PARTICIPANTS}")
+          if [[ -n "${BATCH_PARTICIPANTS}" ]]; then
+            cmd+=(--participants "${BATCH_PARTICIPANTS}")
           fi
 
           if [[ -n "${CLASSIFIER_PARAM}" ]]; then
@@ -230,8 +281,9 @@ jobs:
           {
             echo "# Stimulus decoding run"
             echo
+            echo "- Batch: \`${BATCH_ID}\`"
             echo "- Data directory: \`${PYMEGDEC_ANALYSIS_DATA_DIR}\`"
-            echo "- Participants: \`${PARTICIPANTS:-auto-detected}\`"
+            echo "- Participants: \`${BATCH_PARTICIPANTS:-auto-detected}\`"
             echo "- Time-window centers: \`${TIME_WINDOW}\`"
             echo "- Window step: \`${WINDOW_STEP_S}\` s"
             echo "- Window size: \`${WINDOW_SIZE}\` s"
@@ -249,6 +301,168 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ${{ env.OUTPUT_PREFIX }}-outputs
+          name: ${{ env.OUTPUT_PREFIX }}-${{ matrix.batch_id }}-outputs
           path: outputs/
+          if-no-files-found: warn
+
+  aggregate-outputs:
+    name: Aggregate decoding outputs
+    needs: stimulus-decoding
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download shard artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: ${{ env.OUTPUT_PREFIX }}-*-outputs
+          path: shard-artifacts
+          merge-multiple: false
+
+      - name: Combine participant rows and recompute summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p outputs_combined
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import csv
+          import math
+          import os
+          from collections import defaultdict
+          from pathlib import Path
+
+          root = Path("shard-artifacts")
+          output_prefix = os.environ["OUTPUT_PREFIX"]
+          combined_dir = Path("outputs_combined")
+          combined_dir.mkdir(parents=True, exist_ok=True)
+
+          raw_files = []
+          summary_files = []
+          if root.exists():
+              for path in root.rglob("*.csv"):
+                  if path.name.endswith("_summary.csv"):
+                      summary_files.append(path)
+                  else:
+                      raw_files.append(path)
+
+          def read_csv(path: Path) -> list[dict[str, str]]:
+              with path.open("r", encoding="utf-8", newline="") as handle:
+                  return list(csv.DictReader(handle))
+
+          def to_float(value: object) -> float:
+              try:
+                  return float(value)
+              except (TypeError, ValueError):
+                  return math.nan
+
+          raw_rows: list[dict[str, str]] = []
+          raw_fieldnames: list[str] = []
+          for path in sorted(raw_files):
+              rows = read_csv(path)
+              for row in rows:
+                  row["source_file"] = str(path)
+                  raw_rows.append(row)
+              for field in (rows[0].keys() if rows else []):
+                  if field not in raw_fieldnames:
+                      raw_fieldnames.append(field)
+          if raw_rows:
+              if "source_file" not in raw_fieldnames:
+                  raw_fieldnames.append("source_file")
+              with (combined_dir / f"{output_prefix}.csv").open("w", encoding="utf-8", newline="") as handle:
+                  writer = csv.DictWriter(handle, fieldnames=raw_fieldnames, extrasaction="ignore")
+                  writer.writeheader()
+                  writer.writerows(raw_rows)
+
+          shard_summary_rows: list[dict[str, str]] = []
+          shard_summary_fieldnames: list[str] = []
+          for path in sorted(summary_files):
+              rows = read_csv(path)
+              for row in rows:
+                  row["source_file"] = str(path)
+                  shard_summary_rows.append(row)
+              for field in (rows[0].keys() if rows else []):
+                  if field not in shard_summary_fieldnames:
+                      shard_summary_fieldnames.append(field)
+          if shard_summary_rows:
+              if "source_file" not in shard_summary_fieldnames:
+                  shard_summary_fieldnames.append("source_file")
+              with (combined_dir / f"{output_prefix}_shard_summaries.csv").open("w", encoding="utf-8", newline="") as handle:
+                  writer = csv.DictWriter(handle, fieldnames=shard_summary_fieldnames, extrasaction="ignore")
+                  writer.writeheader()
+                  writer.writerows(shard_summary_rows)
+
+          grouped: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
+          for row in raw_rows:
+              grouped[(row.get("variant", ""), row.get("window_center_s", ""))].append(row)
+
+          summary_rows = []
+          for (variant, window_center), rows in sorted(grouped.items(), key=lambda item: (item[0][0], to_float(item[0][1]))):
+              accuracies = [to_float(row.get("accuracy")) for row in rows]
+              accuracies = [value for value in accuracies if math.isfinite(value)]
+              mean = sum(accuracies) / len(accuracies) if accuracies else math.nan
+              std = math.sqrt(sum((value - mean) ** 2 for value in accuracies) / (len(accuracies) - 1)) if len(accuracies) > 1 else 0.0
+              sem = std / math.sqrt(len(accuracies)) if accuracies else math.nan
+              chance_accuracy = to_float(rows[0].get("chance_accuracy")) if rows else math.nan
+              p_values = [to_float(row.get("permutation_p_value")) for row in rows]
+              finite_p_values = [value for value in p_values if math.isfinite(value)]
+              percents = sorted(100.0 * value for value in accuracies)
+              if percents:
+                  mid = len(percents) // 2
+                  median = percents[mid] if len(percents) % 2 else (percents[mid - 1] + percents[mid]) / 2
+              else:
+                  median = math.nan
+              summary_rows.append(
+                  {
+                      "variant": variant,
+                      "window_center_s": window_center,
+                      "n_participants": len(rows),
+                      "accuracy_mean": mean,
+                      "accuracy_std": std,
+                      "accuracy_sem": sem,
+                      "percent_mean": 100.0 * mean if math.isfinite(mean) else math.nan,
+                      "percent_median": median,
+                      "percent_std": 100.0 * std if math.isfinite(std) else math.nan,
+                      "percent_sem": 100.0 * sem if math.isfinite(sem) else math.nan,
+                      "chance_accuracy": chance_accuracy,
+                      "chance_percent": 100.0 * chance_accuracy if math.isfinite(chance_accuracy) else math.nan,
+                      "above_chance_count": sum(value > chance_accuracy for value in accuracies if math.isfinite(chance_accuracy)),
+                      "n_with_permutation": len(finite_p_values),
+                      "n_significant_p_0.05": sum(value < 0.05 for value in finite_p_values),
+                      "n_significant_p_0.01": sum(value < 0.01 for value in finite_p_values),
+                  }
+              )
+
+          fields = [
+              "variant", "window_center_s", "n_participants", "accuracy_mean", "accuracy_std",
+              "accuracy_sem", "percent_mean", "percent_median", "percent_std", "percent_sem",
+              "chance_accuracy", "chance_percent", "above_chance_count", "n_with_permutation",
+              "n_significant_p_0.05", "n_significant_p_0.01",
+          ]
+          if summary_rows:
+              with (combined_dir / f"{output_prefix}_summary.csv").open("w", encoding="utf-8", newline="") as handle:
+                  writer = csv.DictWriter(handle, fieldnames=fields)
+                  writer.writeheader()
+                  writer.writerows(summary_rows)
+
+          report = [
+              "# Combined stimulus decoding outputs",
+              "",
+              f"- Raw shard CSV files found: `{len(raw_files)}`",
+              f"- Shard summary CSV files found: `{len(summary_files)}`",
+              f"- Combined participant/window rows: `{len(raw_rows)}`",
+              f"- Combined summary rows: `{len(summary_rows)}`",
+          ]
+          (combined_dir / "README.md").write_text("\n".join(report) + "\n", encoding="utf-8")
+          print("\n".join(report))
+          PY
+
+      - name: Upload combined decoding outputs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ env.OUTPUT_PREFIX }}-combined-outputs
+          path: outputs_combined/
           if-no-files-found: warn
