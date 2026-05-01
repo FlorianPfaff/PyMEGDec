@@ -2,123 +2,36 @@ name: Manual stimulus decoding
 
 on:
   workflow_dispatch:
-    inputs:
-      runner:
-        description: Runner label. Use self-hosted when the MEG data are available only on a local runner.
-        required: true
-        default: ubuntu-latest
-        type: choice
-        options:
-          - ubuntu-latest
-          - self-hosted
-      python_version:
-        description: Python version used for the analysis environment.
-        required: true
-        default: "3.13"
-        type: string
-      use_nextcloud_data:
-        description: Download/cache the MEG data from the secret MEG_DATA_ALL before running.
-        required: true
-        default: true
-        type: boolean
-      data_cache_version:
-        description: Bump this value, e.g. v2, to force a fresh Nextcloud download/cache.
-        required: true
-        default: v1
-        type: string
-      data_dir:
-        description: Data directory to use or populate. For Nextcloud downloads, this is the cache target directory.
-        required: true
-        default: .cache/meg-data-all
-        type: string
-      participants:
-        description: Participant ids, e.g. 1-4,6,8. Leave empty to auto-detect participants with main and cue files.
-        required: false
-        default: ""
-        type: string
-      time_window:
-        description: Window-center range as start,stop in seconds. Include pre-stimulus time for the null comparison.
-        required: true
-        default: "-0.4,0.8"
-        type: string
-      window_step_s:
-        description: Step between time-window centers in seconds.
-        required: true
-        default: "0.025"
-        type: string
-      window_size:
-        description: Window size in seconds.
-        required: true
-        default: "0.1"
-        type: string
-      classifier:
-        description: Classifier name passed to pymegdec-stimulus-decoding.
-        required: true
-        default: multiclass-svm
-        type: string
-      classifier_param:
-        description: Optional classifier parameter, JSON, Python literal, numeric value, or empty.
-        required: false
-        default: ""
-        type: string
-      components_pca:
-        description: Number of PCA components, or inf.
-        required: true
-        default: "100"
-        type: string
-      frequency_low:
-        description: Lower frequency bound in Hz.
-        required: true
-        default: "0"
-        type: string
-      frequency_high:
-        description: Upper frequency bound in Hz, or inf.
-        required: true
-        default: inf
-        type: string
-      chance_classes:
-        description: Number of stimulus classes used for the chance line.
-        required: true
-        default: "16"
-        type: string
-      permutations:
-        description: Number of label shuffles per participant/window for permutation p-values.
-        required: true
-        default: "1000"
-        type: string
-      permutation_seed:
-        description: Seed for permutation label shuffles.
-        required: true
-        default: "42"
-        type: string
-      install_extra:
-        description: Optional dependency extra to install.
-        required: true
-        default: none
-        type: choice
-        options:
-          - none
-          - xgboost
-          - torch
-          - all
-      output_prefix:
-        description: Prefix for output CSVs and plot directory under outputs/.
-        required: true
-        default: stimulus_decoding
-        type: string
-      fail_if_missing_data:
-        description: Fail if data_dir does not exist after optional Nextcloud download/cache restore.
-        required: true
-        default: true
-        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+  USE_NEXTCLOUD_DATA: "true"
+  DATA_CACHE_VERSION: v1
+  DATA_DIR: .cache/meg-data-all
+  PARTICIPANTS: ""
+  TIME_WINDOW: "-0.4,0.8"
+  WINDOW_STEP_S: "0.025"
+  WINDOW_SIZE: "0.1"
+  CLASSIFIER: multiclass-svm
+  CLASSIFIER_PARAM: ""
+  COMPONENTS_PCA: "100"
+  FREQUENCY_LOW: "0"
+  FREQUENCY_HIGH: inf
+  CHANCE_CLASSES: "16"
+  PERMUTATIONS: "1000"
+  PERMUTATION_SEED: "42"
+  INSTALL_EXTRA: none
+  OUTPUT_PREFIX: stimulus_decoding
+  FAIL_IF_MISSING_DATA: "true"
 
 jobs:
   stimulus-decoding:
     name: Run stimulus decoding
-    runs-on: ${{ inputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 360
-    permissions:
-      contents: read
 
     steps:
       - name: Check out repository
@@ -126,14 +39,14 @@ jobs:
 
       - name: Restore cached MEG data
         id: meg-data-cache
-        if: ${{ inputs.use_nextcloud_data }}
+        if: ${{ env.USE_NEXTCLOUD_DATA == 'true' }}
         uses: actions/cache/restore@v4
         with:
-          path: ${{ inputs.data_dir }}
-          key: meg-data-all-${{ runner.os }}-${{ inputs.data_cache_version }}
+          path: ${{ env.DATA_DIR }}
+          key: meg-data-all-${{ runner.os }}-${{ env.DATA_CACHE_VERSION }}
 
       - name: Install rclone
-        if: ${{ inputs.use_nextcloud_data && steps.meg-data-cache.outputs.cache-hit != 'true' }}
+        if: ${{ env.USE_NEXTCLOUD_DATA == 'true' && steps.meg-data-cache.outputs.cache-hit != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -141,11 +54,10 @@ jobs:
           sudo apt-get install -y rclone
 
       - name: Download MEG data from bwSync&Share via WebDAV
-        if: ${{ inputs.use_nextcloud_data && steps.meg-data-cache.outputs.cache-hit != 'true' }}
+        if: ${{ env.USE_NEXTCLOUD_DATA == 'true' && steps.meg-data-cache.outputs.cache-hit != 'true' }}
         shell: bash
         env:
           MEG_DATA_ALL: ${{ secrets.MEG_DATA_ALL }}
-          DATA_DIR: ${{ inputs.data_dir }}
         run: |
           set -euo pipefail
 
@@ -197,34 +109,31 @@ jobs:
           rm -f /tmp/nextcloud-share.env
 
       - name: Save MEG data cache
-        if: ${{ inputs.use_nextcloud_data && steps.meg-data-cache.outputs.cache-hit != 'true' }}
+        if: ${{ env.USE_NEXTCLOUD_DATA == 'true' && steps.meg-data-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         continue-on-error: true
         with:
-          path: ${{ inputs.data_dir }}
-          key: meg-data-all-${{ runner.os }}-${{ inputs.data_cache_version }}
+          path: ${{ env.DATA_DIR }}
+          key: meg-data-all-${{ runner.os }}-${{ env.DATA_CACHE_VERSION }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ inputs.python_version }}
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install package
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          if [[ "${{ inputs.install_extra }}" == "none" ]]; then
+          if [[ "${INSTALL_EXTRA}" == "none" ]]; then
             python -m pip install -e .
           else
-            python -m pip install -e ".[${{ inputs.install_extra }}]"
+            python -m pip install -e ".[${INSTALL_EXTRA}]"
           fi
 
       - name: Resolve and validate data directory
         shell: bash
-        env:
-          DATA_DIR_INPUT: ${{ inputs.data_dir }}
-          FAIL_IF_MISSING_DATA: ${{ inputs.fail_if_missing_data }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -233,7 +142,7 @@ jobs:
           import os
           from pathlib import Path
 
-          root = Path(os.environ["DATA_DIR_INPUT"]).expanduser()
+          root = Path(os.environ["DATA_DIR"]).expanduser()
           fail_if_missing = os.environ["FAIL_IF_MISSING_DATA"].lower() == "true"
 
           if not root.exists():
@@ -279,20 +188,6 @@ jobs:
 
       - name: Run 16-way time-resolved stimulus decoding
         shell: bash
-        env:
-          PARTICIPANTS: ${{ inputs.participants }}
-          TIME_WINDOW: ${{ inputs.time_window }}
-          WINDOW_STEP_S: ${{ inputs.window_step_s }}
-          WINDOW_SIZE: ${{ inputs.window_size }}
-          CLASSIFIER: ${{ inputs.classifier }}
-          CLASSIFIER_PARAM: ${{ inputs.classifier_param }}
-          COMPONENTS_PCA: ${{ inputs.components_pca }}
-          FREQUENCY_LOW: ${{ inputs.frequency_low }}
-          FREQUENCY_HIGH: ${{ inputs.frequency_high }}
-          CHANCE_CLASSES: ${{ inputs.chance_classes }}
-          PERMUTATIONS: ${{ inputs.permutations }}
-          PERMUTATION_SEED: ${{ inputs.permutation_seed }}
-          OUTPUT_PREFIX: ${{ inputs.output_prefix }}
         run: |
           set -euo pipefail
           mkdir -p outputs
@@ -354,6 +249,6 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ${{ inputs.output_prefix }}-outputs
+          name: ${{ env.OUTPUT_PREFIX }}-outputs
           path: outputs/
           if-no-files-found: warn

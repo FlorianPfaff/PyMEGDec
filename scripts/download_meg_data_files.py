@@ -9,6 +9,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+_ALLOWED_URL_SCHEMES = {"https"}
+
 
 def _urls_from_env(name: str) -> list[str]:
     raw = os.environ.get(name, "")
@@ -17,11 +19,20 @@ def _urls_from_env(name: str) -> list[str]:
 
 def _direct_url(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
+    if parsed.scheme.lower() not in _ALLOWED_URL_SCHEMES or not parsed.netloc:
+        raise ValueError(f"Only absolute HTTPS URLs are supported: {url!r}")
+
     if parsed.path.rstrip("/").endswith("/download"):
-        return url
-    if "/s/" in f"/{parsed.path.strip('/')}/":
-        return url.rstrip("/") + "/download"
-    return url
+        direct_url = url
+    elif "/s/" in f"/{parsed.path.strip('/')}/":
+        direct_url = url.rstrip("/") + "/download"
+    else:
+        direct_url = url
+
+    direct_parsed = urllib.parse.urlparse(direct_url)
+    if direct_parsed.scheme.lower() not in _ALLOWED_URL_SCHEMES or not direct_parsed.netloc:
+        raise ValueError(f"Only absolute HTTPS download URLs are supported: {direct_url!r}")
+    return direct_url
 
 
 def _filename(response, index: int) -> str:
@@ -57,7 +68,8 @@ def main() -> int:
     downloaded: list[Path] = []
     for index, url in enumerate(urls, start=1):
         request = urllib.request.Request(_direct_url(url), headers={"User-Agent": "PyMEGDec"})
-        with urllib.request.urlopen(request, timeout=180) as response:
+        # The URL is validated above and restricted to absolute HTTPS URLs only.
+        with urllib.request.urlopen(request, timeout=180) as response:  # nosec B310
             target = data_dir / _filename(response, index)
             counter = 2
             while target.exists():
