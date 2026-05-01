@@ -12,15 +12,32 @@ from pathlib import Path
 _ALLOWED_URL_SCHEMES = {"https"}
 
 
+class _HTTPSOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Redirect handler that preserves the HTTPS-only download invariant."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201
+        redirect_url = urllib.parse.urljoin(req.full_url, newurl)
+        _validate_https_url(redirect_url, description="redirect")
+        return super().redirect_request(req, fp, code, msg, headers, redirect_url)
+
+
+_DOWNLOAD_OPENER = urllib.request.build_opener(_HTTPSOnlyRedirectHandler)
+
+
+def _validate_https_url(url: str, *, description: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme.lower() not in _ALLOWED_URL_SCHEMES or not parsed.netloc:
+        raise ValueError(f"Only absolute HTTPS {description} URLs are supported: {url!r}")
+    return url
+
+
 def _urls_from_env(name: str) -> list[str]:
     raw = os.environ.get(name, "")
     return [token.strip() for token in re.split(r"[\s,]+", raw) if token.strip()]
 
 
 def _direct_url(url: str) -> str:
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme.lower() not in _ALLOWED_URL_SCHEMES or not parsed.netloc:
-        raise ValueError(f"Only absolute HTTPS URLs are supported: {url!r}")
+    parsed = urllib.parse.urlparse(_validate_https_url(url, description="source"))
 
     if parsed.path.rstrip("/").endswith("/download"):
         direct_url = url
@@ -29,10 +46,14 @@ def _direct_url(url: str) -> str:
     else:
         direct_url = url
 
-    direct_parsed = urllib.parse.urlparse(direct_url)
-    if direct_parsed.scheme.lower() not in _ALLOWED_URL_SCHEMES or not direct_parsed.netloc:
-        raise ValueError(f"Only absolute HTTPS download URLs are supported: {direct_url!r}")
-    return direct_url
+    return _validate_https_url(direct_url, description="download")
+
+
+def _open_https(request: urllib.request.Request, *, timeout: int):
+    _validate_https_url(request.full_url, description="download")
+    response = _DOWNLOAD_OPENER.open(request, timeout=timeout)
+    _validate_https_url(response.geturl(), description="final download")
+    return response
 
 
 def _filename(response, index: int) -> str:
@@ -68,8 +89,7 @@ def main() -> int:
     downloaded: list[Path] = []
     for index, url in enumerate(urls, start=1):
         request = urllib.request.Request(_direct_url(url), headers={"User-Agent": "PyMEGDec"})
-        # The URL is validated above and restricted to absolute HTTPS URLs only.
-        with urllib.request.urlopen(request, timeout=180) as response:  # nosec B310
+        with _open_https(request, timeout=180) as response:
             target = data_dir / _filename(response, index)
             counter = 2
             while target.exists():
