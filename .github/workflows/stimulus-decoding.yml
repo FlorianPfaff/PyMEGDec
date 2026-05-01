@@ -247,6 +247,8 @@ jobs:
 
           candidate_counts: dict[Path, tuple[int, int]] = {}
           for main_file in root.rglob("Part*Data.mat"):
+              if main_file.name.endswith("CueData.mat"):
+                  continue
               directory = main_file.parent
               main_count, cue_count = candidate_counts.get(directory, (0, 0))
               candidate_counts[directory] = (main_count + 1, cue_count)
@@ -305,7 +307,7 @@ jobs:
             --output "${output_csv}"
             --summary-output "${summary_csv}"
             --plots-dir "${plots_dir}"
-            --time-window "${TIME_WINDOW}"
+            "--time-window=${TIME_WINDOW}"
             --window-step-s "${WINDOW_STEP_S}"
             --window-size "${WINDOW_SIZE}"
             --null-window-center nan
