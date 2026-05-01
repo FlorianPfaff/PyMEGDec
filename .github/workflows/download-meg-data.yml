@@ -2,22 +2,18 @@ name: Download MEG data
 
 on:
   workflow_dispatch:
-    inputs:
-      data_cache_version:
-        required: true
-        default: v1
-        type: string
-      data_dir:
-        required: true
-        default: .cache/meg-data-all
-        type: string
+
+permissions:
+  contents: read
+
+env:
+  DATA_CACHE_VERSION: v1
+  DATA_DIR: .cache/meg-data-all
 
 jobs:
   download-meg-data:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    permissions:
-      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -26,14 +22,14 @@ jobs:
         id: meg-data-cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ inputs.data_dir }}
-          key: meg-data-all-${{ runner.os }}-${{ inputs.data_cache_version }}
+          path: ${{ env.DATA_DIR }}
+          key: meg-data-all-${{ runner.os }}-${{ env.DATA_CACHE_VERSION }}
 
       - name: Download MEG data files
         if: ${{ steps.meg-data-cache.outputs.cache-hit != 'true' }}
         env:
           MEG_DATA_URL_LIST: ${{ secrets.MEG_DATA_URL_LIST }}
-        run: python3 scripts/download_meg_data_files.py --data-dir "${{ inputs.data_dir }}"
+        run: python3 scripts/download_meg_data_files.py --data-dir "${DATA_DIR}"
 
       - name: Verify MEG data
         shell: bash
@@ -41,26 +37,26 @@ jobs:
           set -euo pipefail
           mkdir -p data-manifest
           echo "# MEG data manifest" > data-manifest/meg-data-manifest.md
-          echo "Cache key: meg-data-all-${{ runner.os }}-${{ inputs.data_cache_version }}" >> data-manifest/meg-data-manifest.md
-          echo "Disk usage: $(du -sh '${{ inputs.data_dir }}' | cut -f1)" >> data-manifest/meg-data-manifest.md
-          echo "Main files: $(find '${{ inputs.data_dir }}' -name 'Part*Data.mat' ! -name 'Part*CueData.mat' | wc -l)" >> data-manifest/meg-data-manifest.md
-          echo "Cue files: $(find '${{ inputs.data_dir }}' -name 'Part*CueData.mat' | wc -l)" >> data-manifest/meg-data-manifest.md
+          echo "Cache key: meg-data-all-${{ runner.os }}-${DATA_CACHE_VERSION}" >> data-manifest/meg-data-manifest.md
+          echo "Disk usage: $(du -sh "${DATA_DIR}" | cut -f1)" >> data-manifest/meg-data-manifest.md
+          echo "Main files: $(find "${DATA_DIR}" -name 'Part*Data.mat' ! -name 'Part*CueData.mat' | wc -l)" >> data-manifest/meg-data-manifest.md
+          echo "Cue files: $(find "${DATA_DIR}" -name 'Part*CueData.mat' | wc -l)" >> data-manifest/meg-data-manifest.md
           cat data-manifest/meg-data-manifest.md >> "$GITHUB_STEP_SUMMARY"
-          test "$(find '${{ inputs.data_dir }}' -name 'Part*Data.mat' ! -name 'Part*CueData.mat' | wc -l)" -gt 0
-          test "$(find '${{ inputs.data_dir }}' -name 'Part*CueData.mat' | wc -l)" -gt 0
+          test "$(find "${DATA_DIR}" -name 'Part*Data.mat' ! -name 'Part*CueData.mat' | wc -l)" -gt 0
+          test "$(find "${DATA_DIR}" -name 'Part*CueData.mat' | wc -l)" -gt 0
 
       - name: Save MEG data cache
         if: ${{ steps.meg-data-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         continue-on-error: true
         with:
-          path: ${{ inputs.data_dir }}
-          key: meg-data-all-${{ runner.os }}-${{ inputs.data_cache_version }}
+          path: ${{ env.DATA_DIR }}
+          key: meg-data-all-${{ runner.os }}-${{ env.DATA_CACHE_VERSION }}
 
       - name: Upload data manifest
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: meg-data-manifest-${{ inputs.data_cache_version }}
+          name: meg-data-manifest-${{ env.DATA_CACHE_VERSION }}
           path: data-manifest/
           if-no-files-found: warn
