@@ -119,6 +119,16 @@ on:
         required: true
         default: true
         type: boolean
+      max_parallel:
+        description: Maximum number of participant-batch jobs to run concurrently.
+        required: true
+        default: "2"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "3"
+          - "4"
 
 permissions:
   contents: read
@@ -147,6 +157,7 @@ jobs:
       install_extra: ${{ steps.validate.outputs.install_extra }}
       output_prefix: ${{ steps.validate.outputs.output_prefix }}
       fail_if_missing_data: ${{ steps.validate.outputs.fail_if_missing_data }}
+      max_parallel: ${{ steps.validate.outputs.max_parallel }}
 
     steps:
       - name: Validate manual inputs
@@ -184,6 +195,7 @@ jobs:
               "install_extra": "none",
               "output_prefix": "stimulus_decoding",
               "fail_if_missing_data": "true",
+              "max_parallel": "2",
           }
           ALLOWED_CLASSIFIERS = {
               "multiclass-svm",
@@ -229,10 +241,10 @@ jobs:
 
           def normalize_int(name: str, *, minimum: int, maximum: int) -> str:
               value = require_match(name, r"[0-9]+", max_len=12)
-              integer = int(value)
-              if not minimum <= integer <= maximum:
+              parsed = int(value)
+              if not minimum <= parsed <= maximum:
                   raise SystemExit(f"Input {name!r} must be between {minimum} and {maximum}.")
-              return str(integer)
+              return str(parsed)
 
           def normalize_float(name: str, *, minimum: float | None = None, allow_inf: bool = False) -> str:
               value = raw_value(name).lower()
@@ -240,10 +252,10 @@ jobs:
                   return "inf"
               if not re.fullmatch(r"[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?", value):
                   raise SystemExit(f"Input {name!r} must be a finite number" + (" or inf." if allow_inf else "."))
-              number = float(value)
-              if minimum is not None and number < minimum:
+              parsed = float(value)
+              if minimum is not None and parsed < minimum:
                   raise SystemExit(f"Input {name!r} must be >= {minimum}.")
-              return format(number, ".12g")
+              return format(parsed, ".12g")
 
           def normalize_time_window() -> str:
               value = raw_value("time_window")
@@ -273,16 +285,13 @@ jobs:
               return value
 
           def normalize_components() -> str:
-              value = raw_value("components_pca").lower()
-              if value == "inf":
+              if raw_value("components_pca").lower() == "inf":
                   return "inf"
               return normalize_int("components_pca", minimum=1, maximum=100000)
 
           def normalize_classifier_param() -> str:
               value = raw_value("classifier_param")
-              if value == "":
-                  return value
-              if len(value) > 300 or not re.fullmatch(r"[A-Za-z0-9_.,:{}\[\]\"' +\-eE]*", value):
+              if value and (len(value) > 300 or not re.fullmatch(r"[A-Za-z0-9_.,:{}\[\]\"' +\-eE]*", value)):
                   raise SystemExit("Input 'classifier_param' contains unsupported characters.")
               return value
 
@@ -303,10 +312,11 @@ jobs:
               "frequency_high": normalize_float("frequency_high", minimum=0.0, allow_inf=True),
               "chance_classes": normalize_int("chance_classes", minimum=2, maximum=10000),
               "permutations": normalize_int("permutations", minimum=0, maximum=100000),
-              "permutation_seed": normalize_int("permutation_seed", minimum=0, maximum=2147483647),
+              "permutation_seed": normalize_int("permutation_seed", minimum=0, maximum=4294967295),
               "install_extra": require_match("install_extra", r"[A-Za-z0-9_-]+", max_len=32),
               "output_prefix": require_match("output_prefix", r"[A-Za-z0-9_.-]+", max_len=80),
               "fail_if_missing_data": normalize_bool("fail_if_missing_data"),
+              "max_parallel": normalize_int("max_parallel", minimum=1, maximum=4),
           }
           if sanitized["classifier"] not in ALLOWED_CLASSIFIERS:
               raise SystemExit("Unsupported classifier.")
@@ -343,7 +353,7 @@ jobs:
     timeout-minutes: 360
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: ${{ fromJSON(needs.prepare-inputs.outputs.max_parallel) }}
       matrix:
         include: ${{ fromJSON(needs.prepare-inputs.outputs.batches) }}
     env:
@@ -540,7 +550,7 @@ jobs:
     needs:
       - prepare-inputs
       - stimulus-decoding
-    if: always()
+    if: always() && needs.prepare-inputs.result == 'success'
     runs-on: ubuntu-latest
     env:
       OUTPUT_PREFIX: ${{ needs.prepare-inputs.outputs.output_prefix }}
@@ -609,24 +619,6 @@ jobs:
                   writer = csv.DictWriter(handle, fieldnames=raw_fieldnames, extrasaction="ignore")
                   writer.writeheader()
                   writer.writerows(raw_rows)
-
-          shard_summary_rows: list[dict[str, str]] = []
-          shard_summary_fieldnames: list[str] = []
-          for path in sorted(summary_files):
-              rows = read_csv(path)
-              for row in rows:
-                  row["source_file"] = str(path)
-                  shard_summary_rows.append(row)
-              for field in (rows[0].keys() if rows else []):
-                  if field not in shard_summary_fieldnames:
-                      shard_summary_fieldnames.append(field)
-          if shard_summary_rows:
-              if "source_file" not in shard_summary_fieldnames:
-                  shard_summary_fieldnames.append("source_file")
-              with (combined_dir / f"{output_prefix}_shard_summaries.csv").open("w", encoding="utf-8", newline="") as handle:
-                  writer = csv.DictWriter(handle, fieldnames=shard_summary_fieldnames, extrasaction="ignore")
-                  writer.writeheader()
-                  writer.writerows(shard_summary_rows)
 
           grouped: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
           for row in raw_rows:
