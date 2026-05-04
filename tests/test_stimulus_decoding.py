@@ -2,12 +2,13 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+
 from pymegdec.stimulus_decoding import (
     StimulusDecodingConfig,
     evaluate_participant_stimulus_decoding_diagnostics,
     evaluate_participant_time_resolved_stimulus_transfer,
-    summarize_stimulus_decoding_peaks,
     summarize_stimulus_decoding,
+    summarize_stimulus_decoding_peaks,
     summarize_stimulus_prediction_diagnostics,
     window_centers_from_range,
 )

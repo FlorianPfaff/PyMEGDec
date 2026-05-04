@@ -10,6 +10,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.io as sio
+
 from pymegdec.alpha_metrics import write_alpha_metrics_csv
 from pymegdec.classifiers import (
     get_default_classifier_param,
@@ -159,19 +160,17 @@ def _evaluate_participant_time_resolved_stimulus_transfer(
     prediction_rows = []
     for window_center in config.window_centers:
         include_predictions = _window_center_key(window_center) in diagnostic_centers
-        result = (
-            _evaluate_window(
-                train_data,
-                validation_data,
-                labels_train,
-                labels_validation,
-                participant,
-                float(window_center),
-                classifier_param,
-                config,
-                permutation_rng=permutation_rng,
-                include_predictions=include_predictions,
-            )
+        result = _evaluate_window(
+            train_data,
+            validation_data,
+            labels_train,
+            labels_validation,
+            participant,
+            float(window_center),
+            classifier_param,
+            config,
+            permutation_rng=permutation_rng,
+            include_predictions=include_predictions,
         )
         if include_predictions:
             row, window_prediction_rows = result
@@ -253,8 +252,10 @@ def summarize_stimulus_decoding_peaks(rows):
 def summarize_stimulus_prediction_diagnostics(prediction_rows):
     """Summarize trial-level prediction diagnostics."""
 
-    confusion = defaultdict(int)
-    per_stimulus = defaultdict(lambda: {"n_trials": 0, "n_correct": 0, "participants": set()})
+    confusion: dict[tuple[object, object, object, object], int] = defaultdict(int)
+    per_stimulus_trials: dict[tuple[object, object, object], int] = defaultdict(int)
+    per_stimulus_correct: dict[tuple[object, object, object], int] = defaultdict(int)
+    per_stimulus_participants: dict[tuple[object, object, object], set[object]] = defaultdict(set)
     for row in prediction_rows:
         confusion[
             (
@@ -265,9 +266,9 @@ def summarize_stimulus_prediction_diagnostics(prediction_rows):
             )
         ] += 1
         key = (row["variant"], row["window_center_s"], row["true_stimulus"])
-        per_stimulus[key]["n_trials"] += 1
-        per_stimulus[key]["n_correct"] += int(bool(row["correct"]))
-        per_stimulus[key]["participants"].add(row["participant"])
+        per_stimulus_trials[key] += 1
+        per_stimulus_correct[key] += int(bool(row["correct"]))
+        per_stimulus_participants[key].add(row["participant"])
 
     confusion_rows = [
         {
@@ -279,23 +280,24 @@ def summarize_stimulus_prediction_diagnostics(prediction_rows):
         }
         for (variant, window_center, true_stimulus, predicted_stimulus), count in sorted(
             confusion.items(),
-            key=lambda item: (item[0][0], _to_float(item[0][1]), int(item[0][2]), int(item[0][3])),
+            key=lambda item: (item[0][0], _to_float(item[0][1]), _to_float(item[0][2]), _to_float(item[0][3])),
         )
     ]
     per_stimulus_rows = []
-    for (variant, window_center, true_stimulus), values in sorted(
-        per_stimulus.items(),
-        key=lambda item: (item[0][0], _to_float(item[0][1]), int(item[0][2])),
+    for variant, window_center, true_stimulus in sorted(
+        per_stimulus_trials,
+        key=lambda item: (item[0], _to_float(item[1]), _to_float(item[2])),
     ):
-        n_trials = values["n_trials"]
-        n_correct = values["n_correct"]
+        key = (variant, window_center, true_stimulus)
+        n_trials = per_stimulus_trials[key]
+        n_correct = per_stimulus_correct[key]
         accuracy = n_correct / n_trials if n_trials else np.nan
         per_stimulus_rows.append(
             {
                 "variant": variant,
                 "window_center_s": window_center,
                 "true_stimulus": true_stimulus,
-                "n_participants": len(values["participants"]),
+                "n_participants": len(per_stimulus_participants[key]),
                 "n_trials": n_trials,
                 "n_correct": n_correct,
                 "accuracy": accuracy,
@@ -313,6 +315,7 @@ def write_stimulus_decoding_plots(summary_rows, output_dir):
     _plot_group_accuracy(summary_rows, output_dir / "stimulus_decoding_accuracy.png")
 
 
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments
 def export_time_resolved_stimulus_decoding(
     data_folder,
     participants,
@@ -386,6 +389,7 @@ def _prepare_data(data, config):
     return data
 
 
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals
 def _evaluate_window(
     train_data,
     validation_data,
