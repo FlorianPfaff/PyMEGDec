@@ -119,7 +119,15 @@ step). Summary CSV adds `n_significant_p_0.05` and `n_significant_p_0.01` and
 `n_with_permutation` per window.
 
 ```powershell
-python analyze_stimulus_decoding.py --participants 2 --time-window=-0.2,0.6 --window-step-s 0.05 --permutations 200 --permutation-seed 42 --output outputs\part2_stimulus_decoding.csv --summary-output outputs\part2_stimulus_decoding_summary.csv --plots-dir outputs\part2_stimulus_decoding_plots
+python analyze_stimulus_decoding.py `
+  --participants 2 `
+  --time-window=-0.2,0.6 `
+  --window-step-s 0.05 `
+  --permutations 200 `
+  --permutation-seed 42 `
+  --output outputs\part2_stimulus_decoding.csv `
+  --summary-output outputs\part2_stimulus_decoding_summary.csv `
+  --plots-dir outputs\part2_stimulus_decoding_plots
 ```
 
 Peak-window diagnostics can be exported for selected windows. These write
@@ -127,10 +135,35 @@ trial-level predictions, confusion counts, per-stimulus accuracy, and
 participant-level peak timing/accuracy.
 
 ```powershell
-python analyze_stimulus_decoding.py --participants 2 --time-window=-0.2,0.6 --window-step-s 0.05 --diagnostic-window-centers 0.15,0.2,0.25 --predictions-output outputs\part2_stimulus_predictions.csv --confusion-output outputs\part2_stimulus_confusion.csv --per-stimulus-output outputs\part2_stimulus_per_stimulus.csv --participant-peaks-output outputs\part2_stimulus_participant_peaks.csv --output outputs\part2_stimulus_decoding.csv --summary-output outputs\part2_stimulus_decoding_summary.csv --plots-dir outputs\part2_stimulus_decoding_plots
+python analyze_stimulus_decoding.py `
+  --participants 2 `
+  --time-window=-0.2,0.6 `
+  --window-step-s 0.05 `
+  --diagnostic-window-centers 0.15,0.2,0.25 `
+  --predictions-output outputs\part2_stimulus_predictions.csv `
+  --confusion-output outputs\part2_stimulus_confusion.csv `
+  --per-stimulus-output outputs\part2_stimulus_per_stimulus.csv `
+  --participant-peaks-output outputs\part2_stimulus_participant_peaks.csv `
+  --output outputs\part2_stimulus_decoding.csv `
+  --summary-output outputs\part2_stimulus_decoding_summary.csv `
+  --plots-dir outputs\part2_stimulus_decoding_plots
 ```
 
 The summary CSV and plot aggregate the curve across participants.
+
+For paper-facing confusion matrices, export only trial-level predictions at
+selected control/peak windows. Model labels are zero-based when
+`--null-window-center nan`, while `true_stimulus_id` and
+`predicted_stimulus_id` are one-based image ids.
+
+```powershell
+python scripts\export_stimulus_predictions.py `
+  --window-centers=-0.175,0.175 `
+  --output outputs\stimulus_predictions.csv `
+  --summary-output outputs\stimulus_prediction_summary.csv `
+  --confusion-output outputs\stimulus_predictions_confusion.csv `
+  --per-stimulus-output outputs\stimulus_predictions_per_stimulus.csv
+```
 
 ## Tests
 
