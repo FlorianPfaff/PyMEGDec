@@ -15,6 +15,7 @@ from pymegdec.data_config import resolve_data_folder
 from pymegdec.reaction_time_analysis import available_participants, parse_participant_spec
 from pymegdec.stimulus_decoding import (
     StimulusDecodingConfig,
+    TRANSFER_DIRECTIONS,
     evaluate_participant_stimulus_decoding_diagnostics,
     summarize_stimulus_decoding,
     summarize_stimulus_prediction_diagnostics,
@@ -82,6 +83,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--window-centers", type=_parse_float_list, default=DEFAULT_WINDOW_CENTERS, help="Comma-separated window centers in seconds.")
     parser.add_argument("--window-size", type=float, default=0.1, help="Window size in seconds.")
     parser.add_argument("--null-window-center", type=_float_or_inf, default=float("nan"), help="Center of an optional pre-stimulus null window, or nan.")
+    parser.add_argument("--transfer-direction", choices=TRANSFER_DIRECTIONS, default="main-to-cue", help="Train/validation dataset direction.")
     parser.add_argument("--new-framerate", type=_float_or_inf, default=float("inf"), help="Target frame rate, or inf.")
     parser.add_argument("--classifier", default="multiclass-svm", help="Classifier name.")
     parser.add_argument("--classifier-param", default=None, help="Classifier parameter value, JSON, Python literal, numeric value, or nan.")
@@ -138,6 +140,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         frequency_range=tuple(args.frequency_range),
         chance_classes=args.chance_classes,
         permutations=0,
+        transfer_direction=args.transfer_direction,
     )
 
     accuracy_rows = []

@@ -30,6 +30,7 @@ from .stimulus_decoding import (
     DEFAULT_DECODING_TIME_WINDOW,
     DEFAULT_STIMULUS_WINDOW_SIZE,
     StimulusDecodingConfig,
+    TRANSFER_DIRECTIONS,
     export_time_resolved_stimulus_decoding,
     window_centers_from_range,
 )
@@ -243,6 +244,12 @@ def _build_stimulus_decoding_parser(
         help="Center of an optional pre-stimulus null window, or nan.",
     )
     parser.add_argument(
+        "--transfer-direction",
+        choices=TRANSFER_DIRECTIONS,
+        default="main-to-cue",
+        help="Train/validation dataset direction for stimulus transfer.",
+    )
+    parser.add_argument(
         "--new-framerate",
         type=_float_or_inf,
         default=float("inf"),
@@ -353,6 +360,7 @@ def stimulus_decoding(argv: Sequence[str] | None = None, prog: str | None = None
         chance_classes=args.chance_classes,
         permutations=args.permutations,
         permutation_seed=args.permutation_seed,
+        transfer_direction=args.transfer_direction,
     )
 
     rows, summary_rows = export_time_resolved_stimulus_decoding(

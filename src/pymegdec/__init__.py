@@ -32,6 +32,7 @@ from pymegdec.reaction_time_analysis import (
 )
 from pymegdec.stimulus_decoding import (
     StimulusDecodingConfig,
+    TRANSFER_DIRECTIONS,
     evaluate_participant_stimulus_decoding_diagnostics,
     evaluate_time_resolved_stimulus_transfer,
     export_time_resolved_stimulus_decoding,
@@ -52,6 +53,7 @@ __all__ = [
     "ReactionTimeCsvConfig",
     "ReactionTimeUnavailableError",
     "StimulusDecodingConfig",
+    "TRANSFER_DIRECTIONS",
     "analyze_alpha_reaction_times",
     "analyze_alpha_movement_windows",
     "compute_alpha_movement",
