@@ -1,0 +1,104 @@
+name: Manual stimulus robustness export
+
+#checkov:skip=CKV_GHA_7:Manual workflow inputs are constrained to analysis parameters and used only after shell quoting.
+on:
+  workflow_dispatch:
+    inputs:
+      python_version:
+        description: Python version used for the analysis environment.
+        required: true
+        default: "3.13"
+        type: string
+      data_cache_version:
+        description: MEG data cache version.
+        required: true
+        default: v1
+        type: string
+      data_dir:
+        description: Relative data directory to restore.
+        required: true
+        default: .cache/meg-data-all
+        type: string
+      participants:
+        description: Participant ids for the robustness export.
+        required: true
+        default: "1-4,6,8,9,10,13-27"
+        type: string
+      output_prefix:
+        description: Prefix for output CSVs under outputs/.
+        required: true
+        default: stimulus_robustness
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  export-robustness:
+    name: Export robustness controls
+    runs-on: ubuntu-latest
+    env:
+      DATA_DIR: ${{ inputs.data_dir }}
+      PARTICIPANTS: ${{ inputs.participants }}
+      OUTPUT_PREFIX: ${{ inputs.output_prefix }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Restore cached MEG data
+        id: meg-data-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ inputs.data_dir }}
+          key: meg-data-all-${{ runner.os }}-${{ inputs.data_cache_version }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install package
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: Validate restored data
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.meg-data-cache.outputs.cache-hit }}" != "true" ]]; then
+            echo "MEG cache miss for ${DATA_DIR}" >&2
+            exit 1
+          fi
+          if [[ ! -d "${DATA_DIR}" ]]; then
+            echo "Data directory does not exist: ${DATA_DIR}" >&2
+            exit 1
+          fi
+          main_count=$(find "${DATA_DIR}" -maxdepth 1 -type f -name 'Part*Data.mat' ! -name 'Part*CueData.mat' | wc -l)
+          cue_count=$(find "${DATA_DIR}" -maxdepth 1 -type f -name 'Part*CueData.mat' | wc -l)
+          echo "Found ${main_count} main MAT files and ${cue_count} cue MAT files."
+          test "${main_count}" -gt 0
+          test "${cue_count}" -gt 0
+
+      - name: Export stimulus robustness controls
+        run: |
+          set -euo pipefail
+          mkdir -p outputs
+          python scripts/export_stimulus_robustness.py \
+            --data-dir "${DATA_DIR}" \
+            --participants "${PARTICIPANTS}" \
+            --predictions-output "outputs/${OUTPUT_PREFIX}_predictions.csv" \
+            --accuracy-output "outputs/${OUTPUT_PREFIX}_accuracy.csv" \
+            --summary-output "outputs/${OUTPUT_PREFIX}_summary.csv"
+
+      - name: Upload robustness outputs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stimulus-robustness-outputs
+          path: |
+            outputs/${{ inputs.output_prefix }}_predictions.csv
+            outputs/${{ inputs.output_prefix }}_accuracy.csv
+            outputs/${{ inputs.output_prefix }}_summary.csv
+          if-no-files-found: error

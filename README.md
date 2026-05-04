@@ -105,6 +105,8 @@ cv_accuracy = cross_validate_single_dataset(None, 2, classifier="multiclass-svm"
 Stimulus decoding can be evaluated over a sequence of windows around stimulus
 onset. The command trains on `Part*Data.mat`, validates on `Part*CueData.mat`,
 and reports 16-way stimulus accuracy for each participant and window center.
+Pass `--transfer-direction cue-to-main` to swap the direction and train on cue
+data while validating on the main experiment data.
 By default it uses no null class, because the cue validation files do not
 contain null trials and the clean question is which of the 16 stimuli was shown.
 
@@ -163,6 +165,16 @@ python scripts\export_stimulus_predictions.py `
   --summary-output outputs\stimulus_prediction_summary.csv `
   --confusion-output outputs\stimulus_predictions_confusion.csv `
   --per-stimulus-output outputs\stimulus_predictions_per_stimulus.csv
+```
+
+For controls-first robustness checks, export the default two-window result plus
+reverse transfer, class-balanced SVM, PCA sensitivity, and 0-30 Hz controls:
+
+```powershell
+python scripts\export_stimulus_robustness.py `
+  --predictions-output outputs\stimulus_robustness_predictions.csv `
+  --accuracy-output outputs\stimulus_robustness_accuracy.csv `
+  --summary-output outputs\stimulus_robustness_summary.csv
 ```
 
 ## Tests

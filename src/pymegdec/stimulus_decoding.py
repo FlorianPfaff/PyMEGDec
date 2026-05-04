@@ -29,6 +29,18 @@ DEFAULT_DECODING_TIME_WINDOW = (-0.2, 0.6)
 DEFAULT_DECODING_STEP_S = 0.05
 DEFAULT_STIMULUS_WINDOW_SIZE = 0.1
 DEFAULT_CHANCE_CLASSES = 16
+TRANSFER_DIRECTIONS = ("main-to-cue", "cue-to-main")
+SUMMARY_GROUP_FIELDS = (
+    "control",
+    "control_label",
+    "transfer_direction",
+    "variant",
+    "window_center_s",
+    "classifier",
+    "components_pca",
+    "frequency_low_hz",
+    "frequency_high_hz",
+)
 DEFAULT_WINDOW_CENTERS = tuple(
     float(value)
     for value in np.round(
@@ -43,6 +55,7 @@ DEFAULT_WINDOW_CENTERS = tuple(
 
 
 @dataclass(frozen=True)
+# pylint: disable-next=too-many-instance-attributes
 class StimulusDecodingConfig:
     """Parameters for time-resolved stimulus decoding."""
 
@@ -58,6 +71,7 @@ class StimulusDecodingConfig:
     random_state: int | None = None
     permutations: int = 0
     permutation_seed: int | None = None
+    transfer_direction: str = "main-to-cue"
 
 
 def window_centers_from_range(time_window: tuple[float, float], step_s: float) -> tuple[float, ...]:
@@ -138,8 +152,9 @@ def _evaluate_participant_time_resolved_stimulus_transfer(
     if should_use_default_classifier_param(classifier_param):
         classifier_param = get_default_classifier_param(config.classifier)
 
-    train_data = _load_participant_data(data_folder, participant, cue=False)
-    validation_data = _load_participant_data(data_folder, participant, cue=True)
+    train_cue, validation_cue = _transfer_direction_cue_flags(config.transfer_direction)
+    train_data = _load_participant_data(data_folder, participant, cue=train_cue)
+    validation_data = _load_participant_data(data_folder, participant, cue=validation_cue)
     _check_matching_sample_rate(train_data, validation_data)
 
     labels_train = np.asarray(train_data["trialinfo"][0][0], dtype=int).ravel()
@@ -184,13 +199,13 @@ def _evaluate_participant_time_resolved_stimulus_transfer(
 def summarize_stimulus_decoding(rows):
     """Summarize decoding rows across participants for each window center."""
 
+    group_fields = _present_group_fields(rows, SUMMARY_GROUP_FIELDS)
     grouped = defaultdict(list)
     for row in rows:
-        grouped[(row["variant"], row["window_center_s"])].append(row)
+        grouped[tuple(row.get(field, "") for field in group_fields)].append(row)
 
     summary_rows = []
     for key, group_rows in sorted(grouped.items(), key=lambda item: item[0]):
-        variant, window_center = key
         accuracies = [_to_float(row["accuracy"]) for row in group_rows]
         mean, std, sem = _summary_stats(accuracies)
         percentages = [100.0 * value for value in accuracies if np.isfinite(value)]
@@ -200,10 +215,9 @@ def summarize_stimulus_decoding(rows):
         significant_05 = sum(value < 0.05 for value in permutation_p if np.isfinite(value))
         significant_01 = sum(value < 0.01 for value in permutation_p if np.isfinite(value))
         chance_accuracy = _to_float(group_rows[0]["chance_accuracy"])
-        summary_rows.append(
+        summary_row = dict(zip(group_fields, key))
+        summary_row.update(
             {
-                "variant": variant,
-                "window_center_s": window_center,
                 "n_participants": len(group_rows),
                 "accuracy_mean": mean,
                 "accuracy_std": std,
@@ -220,23 +234,24 @@ def summarize_stimulus_decoding(rows):
                 "n_significant_p_0.01": int(significant_01),
             }
         )
+        summary_rows.append(summary_row)
     return summary_rows
 
 
 def summarize_stimulus_decoding_peaks(rows):
     """Return the best decoding window per participant and variant."""
 
+    group_fields = _present_group_fields(rows, ("control", "control_label", "transfer_direction", "variant", "participant"))
     grouped = defaultdict(list)
     for row in rows:
-        grouped[(row["variant"], row["participant"])].append(row)
+        grouped[tuple(row.get(field, "") for field in group_fields)].append(row)
 
     peak_rows = []
-    for (variant, participant), group_rows in sorted(grouped.items(), key=lambda item: (item[0][0], _to_float(item[0][1]))):
+    for key, group_rows in sorted(grouped.items(), key=lambda item: item[0]):
         peak = max(group_rows, key=lambda row: (_to_float(row["accuracy"]), -abs(_to_float(row["window_center_s"]))))
-        peak_rows.append(
+        peak_row = dict(zip(group_fields, key))
+        peak_row.update(
             {
-                "participant": participant,
-                "variant": variant,
                 "peak_window_center_s": peak["window_center_s"],
                 "peak_window_start_s": peak["window_start_s"],
                 "peak_window_stop_s": peak["window_stop_s"],
@@ -246,56 +261,47 @@ def summarize_stimulus_decoding_peaks(rows):
                 "chance_percent": peak["chance_percent"],
             }
         )
+        peak_rows.append(peak_row)
     return peak_rows
 
 
 def summarize_stimulus_prediction_diagnostics(prediction_rows):
     """Summarize trial-level prediction diagnostics."""
 
-    confusion: dict[tuple[object, object, object, object], int] = defaultdict(int)
-    per_stimulus_trials: dict[tuple[object, object, object], int] = defaultdict(int)
-    per_stimulus_correct: dict[tuple[object, object, object], int] = defaultdict(int)
-    per_stimulus_participants: dict[tuple[object, object, object], set[object]] = defaultdict(set)
+    group_fields = _present_group_fields(prediction_rows, ("control", "control_label", "transfer_direction", "variant", "window_center_s"))
+    confusion: dict[tuple[object, ...], int] = defaultdict(int)
+    per_stimulus_trials: dict[tuple[object, ...], int] = defaultdict(int)
+    per_stimulus_correct: dict[tuple[object, ...], int] = defaultdict(int)
+    per_stimulus_participants: dict[tuple[object, ...], set[object]] = defaultdict(set)
     for row in prediction_rows:
-        confusion[
-            (
-                row["variant"],
-                row["window_center_s"],
-                row["true_stimulus"],
-                row["predicted_stimulus"],
-            )
-        ] += 1
-        key = (row["variant"], row["window_center_s"], row["true_stimulus"])
-        per_stimulus_trials[key] += 1
-        per_stimulus_correct[key] += int(bool(row["correct"]))
-        per_stimulus_participants[key].add(row["participant"])
+        base_key = tuple(row.get(field, "") for field in group_fields)
+        confusion[base_key + (row["true_stimulus"], row["predicted_stimulus"])] += 1
+        per_stimulus_key = base_key + (row["true_stimulus"],)
+        per_stimulus_trials[per_stimulus_key] += 1
+        per_stimulus_correct[per_stimulus_key] += int(bool(row["correct"]))
+        per_stimulus_participants[per_stimulus_key].add(row["participant"])
 
-    confusion_rows = [
-        {
-            "variant": variant,
-            "window_center_s": window_center,
-            "true_stimulus": true_stimulus,
-            "predicted_stimulus": predicted_stimulus,
-            "count": count,
-        }
-        for (variant, window_center, true_stimulus, predicted_stimulus), count in sorted(
-            confusion.items(),
-            key=lambda item: (item[0][0], _to_float(item[0][1]), _to_float(item[0][2]), _to_float(item[0][3])),
+    confusion_rows = []
+    for key, count in sorted(confusion.items()):
+        true_stimulus, predicted_stimulus = key[-2:]
+        row = dict(zip(group_fields, key[:-2]))
+        row.update(
+            {
+                "true_stimulus": true_stimulus,
+                "predicted_stimulus": predicted_stimulus,
+                "count": count,
+            }
         )
-    ]
+        confusion_rows.append(row)
     per_stimulus_rows = []
-    for variant, window_center, true_stimulus in sorted(
-        per_stimulus_trials,
-        key=lambda item: (item[0], _to_float(item[1]), _to_float(item[2])),
-    ):
-        key = (variant, window_center, true_stimulus)
+    for key in sorted(per_stimulus_trials):
+        true_stimulus = key[-1]
         n_trials = per_stimulus_trials[key]
         n_correct = per_stimulus_correct[key]
         accuracy = n_correct / n_trials if n_trials else np.nan
-        per_stimulus_rows.append(
+        row = dict(zip(group_fields, key[:-1]))
+        row.update(
             {
-                "variant": variant,
-                "window_center_s": window_center,
                 "true_stimulus": true_stimulus,
                 "n_participants": len(per_stimulus_participants[key]),
                 "n_trials": n_trials,
@@ -304,6 +310,7 @@ def summarize_stimulus_prediction_diagnostics(prediction_rows):
                 "percent": 100.0 * accuracy,
             }
         )
+        per_stimulus_rows.append(row)
     return confusion_rows, per_stimulus_rows
 
 
@@ -373,6 +380,15 @@ def _load_participant_data(data_folder, participant, *, cue):
     suffix = "CueData" if cue else "Data"
     path = Path(data_folder) / f"Part{participant}{suffix}.mat"
     return sio.loadmat(path)["data"][0]
+
+
+def _transfer_direction_cue_flags(transfer_direction):
+    if transfer_direction == "main-to-cue":
+        return False, True
+    if transfer_direction == "cue-to-main":
+        return True, False
+    supported = ", ".join(TRANSFER_DIRECTIONS)
+    raise ValueError(f"Unsupported transfer direction: {transfer_direction}. Supported directions: {supported}")
 
 
 def _check_matching_sample_rate(train_data, validation_data):
@@ -451,6 +467,7 @@ def _evaluate_window(
     row = {
         "participant": participant,
         "variant": variant,
+        "transfer_direction": config.transfer_direction,
         "window_center_s": window_center,
         "window_start_s": train_window[0],
         "window_stop_s": train_window[1],
@@ -513,6 +530,7 @@ def _stimulus_prediction_rows(
             {
                 "participant": participant,
                 "variant": variant,
+                "transfer_direction": config.transfer_direction,
                 "window_center_s": window_center,
                 "window_start_s": window_start,
                 "window_stop_s": window_stop,
@@ -609,6 +627,10 @@ def _summary_stats(values):
         return np.nan, np.nan, np.nan
     std = float(np.std(values, ddof=1)) if values.size > 1 else 0.0
     return float(np.mean(values)), std, float(std / np.sqrt(values.size))
+
+
+def _present_group_fields(rows, fields):
+    return tuple(field for field in fields if any(field in row for row in rows))
 
 
 def _plot_group_accuracy(summary_rows, output_path):

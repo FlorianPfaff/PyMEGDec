@@ -40,6 +40,14 @@ on:
         required: true
         default: "0.1"
         type: string
+      transfer_direction:
+        description: Train/validation dataset direction.
+        required: true
+        default: main-to-cue
+        type: choice
+        options:
+          - main-to-cue
+          - cue-to-main
       classifier:
         description: Classifier name passed to the prediction export.
         required: true
@@ -117,6 +125,7 @@ jobs:
       participants: ${{ steps.validate.outputs.participants }}
       window_centers: ${{ steps.validate.outputs.window_centers }}
       window_size: ${{ steps.validate.outputs.window_size }}
+      transfer_direction: ${{ steps.validate.outputs.transfer_direction }}
       classifier: ${{ steps.validate.outputs.classifier }}
       classifier_param: ${{ steps.validate.outputs.classifier_param }}
       components_pca: ${{ steps.validate.outputs.components_pca }}
@@ -149,6 +158,7 @@ jobs:
               "participants": "",
               "window_centers": "-0.175,0.175",
               "window_size": "0.1",
+              "transfer_direction": "main-to-cue",
               "classifier": "multiclass-svm",
               "classifier_param": "",
               "components_pca": "100",
@@ -172,6 +182,7 @@ jobs:
               "pytorch-mlp",
           }
           ALLOWED_EXTRAS = {"none", "xgboost", "torch", "all"}
+          ALLOWED_TRANSFER_DIRECTIONS = {"main-to-cue", "cue-to-main"}
 
           event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
           raw_inputs = event.get("inputs", {})
@@ -269,6 +280,7 @@ jobs:
               "participants": normalize_participants(),
               "window_centers": normalize_float_list("window_centers", minimum=-10.0, maximum=10.0),
               "window_size": normalize_float("window_size", minimum=0.001),
+              "transfer_direction": require_match("transfer_direction", r"[A-Za-z0-9_-]+", max_len=32),
               "classifier": require_match("classifier", r"[A-Za-z0-9_-]+", max_len=64),
               "classifier_param": normalize_classifier_param(),
               "components_pca": normalize_components(),
@@ -281,6 +293,8 @@ jobs:
           }
           if sanitized["classifier"] not in ALLOWED_CLASSIFIERS:
               raise SystemExit("Unsupported classifier.")
+          if sanitized["transfer_direction"] not in ALLOWED_TRANSFER_DIRECTIONS:
+              raise SystemExit("Unsupported transfer direction.")
           if sanitized["install_extra"] not in ALLOWED_EXTRAS:
               raise SystemExit("Unsupported install extra.")
           if sanitized["frequency_high"] != "inf" and float(sanitized["frequency_high"]) < float(sanitized["frequency_low"]):
@@ -304,6 +318,7 @@ jobs:
       PARTICIPANTS: ${{ needs.prepare-inputs.outputs.participants }}
       WINDOW_CENTERS: ${{ needs.prepare-inputs.outputs.window_centers }}
       WINDOW_SIZE: ${{ needs.prepare-inputs.outputs.window_size }}
+      TRANSFER_DIRECTION: ${{ needs.prepare-inputs.outputs.transfer_direction }}
       CLASSIFIER: ${{ needs.prepare-inputs.outputs.classifier }}
       CLASSIFIER_PARAM: ${{ needs.prepare-inputs.outputs.classifier_param }}
       COMPONENTS_PCA: ${{ needs.prepare-inputs.outputs.components_pca }}
@@ -431,6 +446,7 @@ jobs:
             "--window-centers=${WINDOW_CENTERS}"
             --window-size "${WINDOW_SIZE}"
             --null-window-center nan
+            --transfer-direction "${TRANSFER_DIRECTION}"
             --classifier "${CLASSIFIER}"
             --components-pca "${COMPONENTS_PCA}"
             --frequency-range "${FREQUENCY_LOW}" "${FREQUENCY_HIGH}"
@@ -461,6 +477,7 @@ jobs:
             echo "- Participants: \`${PARTICIPANTS:-auto-detected}\`"
             echo "- Window centers: \`${WINDOW_CENTERS}\`"
             echo "- Window size: \`${WINDOW_SIZE}\` s"
+            echo "- Transfer direction: \`${TRANSFER_DIRECTION}\`"
             echo "- Classifier: \`${CLASSIFIER}\`"
             echo "- PCA components: \`${COMPONENTS_PCA}\`"
             echo "- Frequency range: \`${FREQUENCY_LOW}\` to \`${FREQUENCY_HIGH}\` Hz"

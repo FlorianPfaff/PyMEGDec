@@ -49,13 +49,16 @@ class TestStimulusDecoding(unittest.TestCase):
                 {"data": np.array([train_data], dtype=object)},
                 {"data": np.array([validation_data], dtype=object)},
             ],
-        ):
+        ) as loadmat:
             rows = evaluate_participant_time_resolved_stimulus_transfer("unused", 1, config=config)
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["variant"], "without_null")
+        self.assertEqual(rows[0]["transfer_direction"], "main-to-cue")
         self.assertEqual(rows[0]["accuracy"], 1.0)
         self.assertEqual(rows[0]["chance_accuracy"], 0.5)
+        self.assertTrue(str(loadmat.call_args_list[0].args[0]).endswith("Part1Data.mat"))
+        self.assertTrue(str(loadmat.call_args_list[1].args[0]).endswith("Part1CueData.mat"))
 
     def test_evaluate_participant_stimulus_decoding_diagnostics(self):
         labels = [1, 2, 1, 2]
@@ -87,9 +90,43 @@ class TestStimulusDecoding(unittest.TestCase):
         self.assertEqual({row["window_center_s"] for row in prediction_rows}, {0.0})
         self.assertEqual([row["true_stimulus"] for row in prediction_rows], labels)
         self.assertEqual([row["true_stimulus_id"] for row in prediction_rows], labels)
+        self.assertEqual({row["transfer_direction"] for row in prediction_rows}, {"main-to-cue"})
         self.assertEqual([row["validation_trial_index"] for row in prediction_rows], [0, 1, 2, 3])
         self.assertEqual([row["validation_trial_number"] for row in prediction_rows], [1, 2, 3, 4])
         self.assertEqual({row["actual_components_pca"] for row in prediction_rows}, {1})
+        self.assertTrue(all(row["correct"] for row in prediction_rows))
+
+    def test_cue_to_main_transfer_swaps_train_and_validation_files(self):
+        labels = [1, 2, 1, 2]
+        cue_train_data = _mat_data(labels, [-2.0, 2.0, -1.0, 1.0], [-0.1, 0.0])
+        main_validation_data = _mat_data(labels, [-1.5, 1.5, -0.5, 0.5], [-0.1, 0.0])
+        config = StimulusDecodingConfig(
+            window_centers=(0.0,),
+            window_size=0.0,
+            components_pca=float("inf"),
+            chance_classes=2,
+            transfer_direction="cue-to-main",
+        )
+
+        with patch(
+            "pymegdec.stimulus_decoding.sio.loadmat",
+            side_effect=[
+                {"data": np.array([cue_train_data], dtype=object)},
+                {"data": np.array([main_validation_data], dtype=object)},
+            ],
+        ) as loadmat:
+            rows, prediction_rows = evaluate_participant_stimulus_decoding_diagnostics(
+                "unused",
+                1,
+                config=config,
+                diagnostic_window_centers=(0.0,),
+            )
+
+        self.assertTrue(str(loadmat.call_args_list[0].args[0]).endswith("Part1CueData.mat"))
+        self.assertTrue(str(loadmat.call_args_list[1].args[0]).endswith("Part1Data.mat"))
+        self.assertEqual(rows[0]["transfer_direction"], "cue-to-main")
+        self.assertEqual({row["transfer_direction"] for row in prediction_rows}, {"cue-to-main"})
+        self.assertEqual([row["true_stimulus_id"] for row in prediction_rows], labels)
         self.assertTrue(all(row["correct"] for row in prediction_rows))
 
     def test_evaluate_participant_time_resolved_stimulus_transfer_with_permutations(
