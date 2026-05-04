@@ -9,10 +9,12 @@ import sys
 from typing import Sequence
 
 import numpy as np
-
 from pymegdec.alpha_metrics import write_alpha_metrics_csv
 from pymegdec.data_config import resolve_data_folder
-from pymegdec.reaction_time_analysis import available_participants, parse_participant_spec
+from pymegdec.reaction_time_analysis import (
+    available_participants,
+    parse_participant_spec,
+)
 from pymegdec.stimulus_decoding import (
     StimulusDecodingConfig,
     evaluate_participant_stimulus_decoding_diagnostics,

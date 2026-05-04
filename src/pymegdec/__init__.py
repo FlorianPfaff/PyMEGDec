@@ -35,9 +35,9 @@ from pymegdec.stimulus_decoding import (
     evaluate_participant_stimulus_decoding_diagnostics,
     evaluate_time_resolved_stimulus_transfer,
     export_time_resolved_stimulus_decoding,
+    summarize_stimulus_decoding,
     summarize_stimulus_decoding_peaks,
     summarize_stimulus_prediction_diagnostics,
-    summarize_stimulus_decoding,
 )
 
 __version__ = "0.1.0"

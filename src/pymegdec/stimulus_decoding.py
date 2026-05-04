@@ -10,7 +10,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.io as sio
-
 from pymegdec.alpha_metrics import write_alpha_metrics_csv
 from pymegdec.classifiers import (
     get_default_classifier_param,
