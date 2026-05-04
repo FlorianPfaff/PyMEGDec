@@ -27,20 +27,24 @@ DEFAULT_PARTICIPANTS = "1-4,6,8,9,10,13-27"
 DEFAULT_WINDOW_CENTERS = (-0.175, 0.175)
 
 
+# jscpd:ignore-start
 @dataclass(frozen=True)
 class RobustnessControl:
     name: str
     label: str
-    overrides: dict[str, object]
+    transfer_direction: str | None = None
+    classifier: str | None = None
+    components_pca: int | float | None = None
+    frequency_range: tuple[float, float] | None = None
 
 
 ROBUSTNESS_CONTROLS = (
-    RobustnessControl("default", "Main-to-cue SVM, PCA 100, broadband", {}),
-    RobustnessControl("reverse_transfer", "Cue-to-main SVM, PCA 100, broadband", {"transfer_direction": "cue-to-main"}),
-    RobustnessControl("weighted_svm", "Main-to-cue balanced SVM, PCA 100, broadband", {"classifier": "multiclass-svm-weighted"}),
-    RobustnessControl("pca_50", "Main-to-cue SVM, PCA 50, broadband", {"components_pca": 50}),
-    RobustnessControl("pca_200", "Main-to-cue SVM, PCA 200, broadband", {"components_pca": 200}),
-    RobustnessControl("low_frequency", "Main-to-cue SVM, PCA 100, 0-30 Hz", {"frequency_range": (0.0, 30.0)}),
+    RobustnessControl("default", "Main-to-cue SVM, PCA 100, broadband"),
+    RobustnessControl("reverse_transfer", "Cue-to-main SVM, PCA 100, broadband", transfer_direction="cue-to-main"),
+    RobustnessControl("weighted_svm", "Main-to-cue balanced SVM, PCA 100, broadband", classifier="multiclass-svm-weighted"),
+    RobustnessControl("pca_50", "Main-to-cue SVM, PCA 50, broadband", components_pca=50),
+    RobustnessControl("pca_200", "Main-to-cue SVM, PCA 200, broadband", components_pca=200),
+    RobustnessControl("low_frequency", "Main-to-cue SVM, PCA 100, 0-30 Hz", frequency_range=(0.0, 30.0)),
 )
 
 
@@ -84,7 +88,16 @@ def _annotate(rows, control: RobustnessControl):
 
 
 def _control_config(base_config: StimulusDecodingConfig, control: RobustnessControl) -> StimulusDecodingConfig:
-    return replace(base_config, **control.overrides)
+    config = base_config
+    if control.transfer_direction is not None:
+        config = replace(config, transfer_direction=control.transfer_direction)
+    if control.classifier is not None:
+        config = replace(config, classifier=control.classifier)
+    if control.components_pca is not None:
+        config = replace(config, components_pca=control.components_pca)
+    if control.frequency_range is not None:
+        config = replace(config, frequency_range=control.frequency_range)
+    return config
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -138,3 +151,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+# jscpd:ignore-end
