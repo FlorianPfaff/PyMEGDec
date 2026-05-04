@@ -86,6 +86,10 @@ class TestStimulusDecoding(unittest.TestCase):
         self.assertEqual(len(prediction_rows), 4)
         self.assertEqual({row["window_center_s"] for row in prediction_rows}, {0.0})
         self.assertEqual([row["true_stimulus"] for row in prediction_rows], labels)
+        self.assertEqual([row["true_stimulus_id"] for row in prediction_rows], labels)
+        self.assertEqual([row["validation_trial_index"] for row in prediction_rows], [0, 1, 2, 3])
+        self.assertEqual([row["validation_trial_number"] for row in prediction_rows], [1, 2, 3, 4])
+        self.assertEqual({row["actual_components_pca"] for row in prediction_rows}, {1})
         self.assertTrue(all(row["correct"] for row in prediction_rows))
 
     def test_evaluate_participant_time_resolved_stimulus_transfer_with_permutations(
