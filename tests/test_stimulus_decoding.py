@@ -2,7 +2,6 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
-
 from pymegdec.stimulus_decoding import (
     StimulusDecodingConfig,
     evaluate_participant_stimulus_decoding_diagnostics,
