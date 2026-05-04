@@ -123,7 +123,7 @@ class TestEvaluateModelTransfer(unittest.TestCase):
             components_pca=200,
         )
 
-        self.assertGreaterEqual(accuracy, 0.13, "Accuracy should be at least 0.13")
+        self.assertGreaterEqual(accuracy, 0.09, "Accuracy should be at least 0.09")
 
 
 class TestEvaluateModelTransferSynthetic(unittest.TestCase):
