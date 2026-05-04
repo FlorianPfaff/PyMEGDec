@@ -182,6 +182,26 @@ def _build_stimulus_decoding_parser(
         help="Optional output CSV summarized across participants by time window.",
     )
     parser.add_argument(
+        "--predictions-output",
+        default=None,
+        help="Optional trial-level prediction CSV for selected diagnostic windows.",
+    )
+    parser.add_argument(
+        "--confusion-output",
+        default=None,
+        help="Optional confusion-count CSV for selected diagnostic windows.",
+    )
+    parser.add_argument(
+        "--per-stimulus-output",
+        default=None,
+        help="Optional per-stimulus accuracy CSV for selected diagnostic windows.",
+    )
+    parser.add_argument(
+        "--participant-peaks-output",
+        default=None,
+        help="Optional CSV with each participant's peak decoding window.",
+    )
+    parser.add_argument(
         "--plots-dir",
         default=None,
         help="Optional directory for group-level stimulus decoding plots.",
@@ -197,6 +217,12 @@ def _build_stimulus_decoding_parser(
         type=_parse_float_list,
         default=None,
         help=("Explicit comma-separated window centers in seconds. Overrides " "--time-window."),
+    )
+    parser.add_argument(
+        "--diagnostic-window-centers",
+        type=_parse_float_list,
+        default=None,
+        help="Comma-separated window centers for trial prediction diagnostics.",
     )
     parser.add_argument(
         "--window-step-s",
@@ -305,6 +331,15 @@ def stimulus_decoding(argv: Sequence[str] | None = None, prog: str | None = None
     window_centers = args.window_centers
     if window_centers is None:
         window_centers = window_centers_from_range(args.time_window, args.window_step_s)
+    diagnostic_requested = any(
+        (
+            args.predictions_output,
+            args.confusion_output,
+            args.per_stimulus_output,
+        )
+    )
+    if diagnostic_requested and not args.diagnostic_window_centers:
+        parser.error("--diagnostic-window-centers is required for prediction, confusion, or per-stimulus outputs.")
 
     config = StimulusDecodingConfig(
         window_centers=window_centers,
@@ -325,6 +360,11 @@ def stimulus_decoding(argv: Sequence[str] | None = None, prog: str | None = None
         participants,
         args.output,
         summary_output_path=args.summary_output,
+        predictions_output_path=args.predictions_output,
+        confusion_output_path=args.confusion_output,
+        per_stimulus_output_path=args.per_stimulus_output,
+        participant_peaks_output_path=args.participant_peaks_output,
+        diagnostic_window_centers=args.diagnostic_window_centers,
         plots_dir=args.plots_dir,
         config=config,
         progress=print,
@@ -332,6 +372,10 @@ def stimulus_decoding(argv: Sequence[str] | None = None, prog: str | None = None
     print(f"Wrote {len(rows)} participant/window rows to {args.output}")
     if args.summary_output:
         print(f"Wrote {len(summary_rows)} summary rows to {args.summary_output}")
+    if args.participant_peaks_output:
+        print(f"Wrote participant peaks to {args.participant_peaks_output}")
+    if args.diagnostic_window_centers:
+        print(f"Wrote diagnostics for windows {args.diagnostic_window_centers}")
     if args.plots_dir:
         print(f"Wrote plots to {args.plots_dir}")
     return 0
