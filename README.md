@@ -132,6 +132,15 @@ python analyze_stimulus_decoding.py --participants 2 --time-window=-0.2,0.6 --wi
 
 The summary CSV and plot aggregate the curve across participants.
 
+For paper-facing confusion matrices, export only trial-level predictions at
+selected control/peak windows. Model labels are zero-based when
+`--null-window-center nan`, while `true_stimulus_id` and
+`predicted_stimulus_id` are one-based image ids.
+
+```powershell
+python scripts\export_stimulus_predictions.py --window-centers=-0.175,0.175 --output outputs\stimulus_predictions.csv --summary-output outputs\stimulus_prediction_summary.csv --confusion-output outputs\stimulus_predictions_confusion.csv --per-stimulus-output outputs\stimulus_predictions_per_stimulus.csv
+```
+
 ## Tests
 
 The default suite includes fast tests that run without private MEG files.

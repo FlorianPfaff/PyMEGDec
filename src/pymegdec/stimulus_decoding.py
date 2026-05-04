@@ -484,9 +484,12 @@ def _evaluate_window(
             participant,
             variant,
             window_center,
+            train_window[0],
+            train_window[1],
             labels_validation,
             predictions,
             config,
+            pca_components,
         )
     return row
 
@@ -495,9 +498,12 @@ def _stimulus_prediction_rows(
     participant,
     variant,
     window_center,
+    window_start,
+    window_stop,
     labels_validation,
     predictions,
     config,
+    actual_components_pca,
 ):
     rows = []
     for trial_idx, (true_label, predicted_label) in enumerate(zip(labels_validation, predictions)):
@@ -508,14 +514,21 @@ def _stimulus_prediction_rows(
                 "participant": participant,
                 "variant": variant,
                 "window_center_s": window_center,
+                "window_start_s": window_start,
+                "window_stop_s": window_stop,
                 "trial": trial_idx,
+                "validation_trial_index": trial_idx,
+                "validation_trial_number": trial_idx + 1,
                 "true_label": int(true_label),
                 "predicted_label": int(predicted_label),
                 "true_stimulus": true_stimulus,
                 "predicted_stimulus": predicted_stimulus,
+                "true_stimulus_id": true_stimulus,
+                "predicted_stimulus_id": predicted_stimulus,
                 "correct": bool(predicted_label == true_label),
                 "classifier": config.classifier,
                 "components_pca": config.components_pca,
+                "actual_components_pca": actual_components_pca,
             }
         )
     return rows
