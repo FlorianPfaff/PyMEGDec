@@ -99,6 +99,39 @@ def evaluate_participant_time_resolved_stimulus_transfer(
 ):
     """Evaluate one participant's stimulus transfer accuracy across window centers."""
 
+    rows, _ = _evaluate_participant_time_resolved_stimulus_transfer(
+        data_folder,
+        participant,
+        config=config,
+        diagnostic_window_centers=(),
+    )
+    return rows
+
+
+def evaluate_participant_stimulus_decoding_diagnostics(
+    data_folder,
+    participant,
+    *,
+    config=None,
+    diagnostic_window_centers=None,
+):
+    """Evaluate one participant and return accuracy rows plus prediction diagnostics."""
+
+    return _evaluate_participant_time_resolved_stimulus_transfer(
+        data_folder,
+        participant,
+        config=config,
+        diagnostic_window_centers=diagnostic_window_centers,
+    )
+
+
+def _evaluate_participant_time_resolved_stimulus_transfer(
+    data_folder,
+    participant,
+    *,
+    config=None,
+    diagnostic_window_centers=None,
+):
     config = config or StimulusDecodingConfig()
     classifier_param = config.classifier_param
     if should_use_default_classifier_param(classifier_param):
@@ -120,10 +153,13 @@ def evaluate_participant_time_resolved_stimulus_transfer(
     train_data = _prepare_data(train_data, config)
     validation_data = _prepare_data(validation_data, config)
     permutation_rng = np.random.default_rng(config.permutation_seed)
+    diagnostic_centers = _window_center_set(diagnostic_window_centers or ())
 
     rows = []
+    prediction_rows = []
     for window_center in config.window_centers:
-        rows.append(
+        include_predictions = _window_center_key(window_center) in diagnostic_centers
+        result = (
             _evaluate_window(
                 train_data,
                 validation_data,
@@ -134,9 +170,16 @@ def evaluate_participant_time_resolved_stimulus_transfer(
                 classifier_param,
                 config,
                 permutation_rng=permutation_rng,
+                include_predictions=include_predictions,
             )
         )
-    return rows
+        if include_predictions:
+            row, window_prediction_rows = result
+            rows.append(row)
+            prediction_rows.extend(window_prediction_rows)
+        else:
+            rows.append(result)
+    return rows, prediction_rows
 
 
 def summarize_stimulus_decoding(rows):
@@ -181,6 +224,87 @@ def summarize_stimulus_decoding(rows):
     return summary_rows
 
 
+def summarize_stimulus_decoding_peaks(rows):
+    """Return the best decoding window per participant and variant."""
+
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[(row["variant"], row["participant"])].append(row)
+
+    peak_rows = []
+    for (variant, participant), group_rows in sorted(grouped.items(), key=lambda item: (item[0][0], _to_float(item[0][1]))):
+        peak = max(group_rows, key=lambda row: (_to_float(row["accuracy"]), -abs(_to_float(row["window_center_s"]))))
+        peak_rows.append(
+            {
+                "participant": participant,
+                "variant": variant,
+                "peak_window_center_s": peak["window_center_s"],
+                "peak_window_start_s": peak["window_start_s"],
+                "peak_window_stop_s": peak["window_stop_s"],
+                "peak_accuracy": peak["accuracy"],
+                "peak_percent": peak["percent"],
+                "chance_accuracy": peak["chance_accuracy"],
+                "chance_percent": peak["chance_percent"],
+            }
+        )
+    return peak_rows
+
+
+def summarize_stimulus_prediction_diagnostics(prediction_rows):
+    """Summarize trial-level prediction diagnostics."""
+
+    confusion = defaultdict(int)
+    per_stimulus = defaultdict(lambda: {"n_trials": 0, "n_correct": 0, "participants": set()})
+    for row in prediction_rows:
+        confusion[
+            (
+                row["variant"],
+                row["window_center_s"],
+                row["true_stimulus"],
+                row["predicted_stimulus"],
+            )
+        ] += 1
+        key = (row["variant"], row["window_center_s"], row["true_stimulus"])
+        per_stimulus[key]["n_trials"] += 1
+        per_stimulus[key]["n_correct"] += int(bool(row["correct"]))
+        per_stimulus[key]["participants"].add(row["participant"])
+
+    confusion_rows = [
+        {
+            "variant": variant,
+            "window_center_s": window_center,
+            "true_stimulus": true_stimulus,
+            "predicted_stimulus": predicted_stimulus,
+            "count": count,
+        }
+        for (variant, window_center, true_stimulus, predicted_stimulus), count in sorted(
+            confusion.items(),
+            key=lambda item: (item[0][0], _to_float(item[0][1]), int(item[0][2]), int(item[0][3])),
+        )
+    ]
+    per_stimulus_rows = []
+    for (variant, window_center, true_stimulus), values in sorted(
+        per_stimulus.items(),
+        key=lambda item: (item[0][0], _to_float(item[0][1]), int(item[0][2])),
+    ):
+        n_trials = values["n_trials"]
+        n_correct = values["n_correct"]
+        accuracy = n_correct / n_trials if n_trials else np.nan
+        per_stimulus_rows.append(
+            {
+                "variant": variant,
+                "window_center_s": window_center,
+                "true_stimulus": true_stimulus,
+                "n_participants": len(values["participants"]),
+                "n_trials": n_trials,
+                "n_correct": n_correct,
+                "accuracy": accuracy,
+                "percent": 100.0 * accuracy,
+            }
+        )
+    return confusion_rows, per_stimulus_rows
+
+
 def write_stimulus_decoding_plots(summary_rows, output_dir):
     """Write group-level stimulus decoding plots."""
 
@@ -195,6 +319,11 @@ def export_time_resolved_stimulus_decoding(
     output_path,
     *,
     summary_output_path=None,
+    predictions_output_path=None,
+    confusion_output_path=None,
+    per_stimulus_output_path=None,
+    participant_peaks_output_path=None,
+    diagnostic_window_centers=None,
     plots_dir=None,
     config=None,
     progress=None,
@@ -202,16 +331,36 @@ def export_time_resolved_stimulus_decoding(
     """Run time-resolved stimulus decoding and write CSV/plot artifacts."""
 
     config = config or StimulusDecodingConfig()
-    rows = evaluate_time_resolved_stimulus_transfer(
-        data_folder,
-        participants,
-        config=config,
-        progress=progress,
-    )
+    data_folder = resolve_data_folder(data_folder)
+    rows = []
+    prediction_rows = []
+    for participant in participants:
+        if progress is not None:
+            progress(f"START participant={participant}")
+        participant_rows, participant_prediction_rows = _evaluate_participant_time_resolved_stimulus_transfer(
+            data_folder,
+            participant,
+            config=config,
+            diagnostic_window_centers=diagnostic_window_centers,
+        )
+        rows.extend(participant_rows)
+        prediction_rows.extend(participant_prediction_rows)
+        if progress is not None:
+            progress(f"DONE participant={participant}")
     write_alpha_metrics_csv(rows, output_path)
     summary_rows = summarize_stimulus_decoding(rows)
     if summary_output_path:
         write_alpha_metrics_csv(summary_rows, summary_output_path)
+    if participant_peaks_output_path:
+        write_alpha_metrics_csv(summarize_stimulus_decoding_peaks(rows), participant_peaks_output_path)
+    if predictions_output_path and prediction_rows:
+        write_alpha_metrics_csv(prediction_rows, predictions_output_path)
+    if (confusion_output_path or per_stimulus_output_path) and prediction_rows:
+        confusion_rows, per_stimulus_rows = summarize_stimulus_prediction_diagnostics(prediction_rows)
+        if confusion_output_path:
+            write_alpha_metrics_csv(confusion_rows, confusion_output_path)
+        if per_stimulus_output_path:
+            write_alpha_metrics_csv(per_stimulus_rows, per_stimulus_output_path)
     if plots_dir:
         write_stimulus_decoding_plots(summary_rows, plots_dir)
     return rows, summary_rows
@@ -247,6 +396,7 @@ def _evaluate_window(
     classifier_param,
     config,
     permutation_rng=None,
+    include_predictions=False,
 ):
     train_window = _centered_window(window_center, config.window_size)
     null_window = _null_window(config)
@@ -294,7 +444,7 @@ def _evaluate_window(
     variant = "without_null" if np.isnan(config.null_window_center) else "with_null"
     null_prediction_rate = float(np.mean(predictions == 0)) if variant == "with_null" else np.nan
 
-    return {
+    row = {
         "participant": participant,
         "variant": variant,
         "window_center_s": window_center,
@@ -325,6 +475,54 @@ def _evaluate_window(
         "frequency_high_hz": config.frequency_range[1],
     }
 
+    if include_predictions:
+        return row, _stimulus_prediction_rows(
+            participant,
+            variant,
+            window_center,
+            labels_validation,
+            predictions,
+            config,
+        )
+    return row
+
+
+def _stimulus_prediction_rows(
+    participant,
+    variant,
+    window_center,
+    labels_validation,
+    predictions,
+    config,
+):
+    rows = []
+    for trial_idx, (true_label, predicted_label) in enumerate(zip(labels_validation, predictions)):
+        true_stimulus = _display_stimulus_label(true_label, variant)
+        predicted_stimulus = _display_stimulus_label(predicted_label, variant)
+        rows.append(
+            {
+                "participant": participant,
+                "variant": variant,
+                "window_center_s": window_center,
+                "trial": trial_idx,
+                "true_label": int(true_label),
+                "predicted_label": int(predicted_label),
+                "true_stimulus": true_stimulus,
+                "predicted_stimulus": predicted_stimulus,
+                "correct": bool(predicted_label == true_label),
+                "classifier": config.classifier,
+                "components_pca": config.components_pca,
+            }
+        )
+    return rows
+
+
+def _display_stimulus_label(label, variant):
+    label = int(label)
+    if variant == "without_null":
+        return label + 1
+    return label
+
 
 def _centered_window(center, size):
     return center - size / 2, center + size / 2
@@ -340,6 +538,14 @@ def _actual_pca_components(components_pca, features):
     if components_pca == float("inf"):
         return features.shape[1]
     return min(int(components_pca), features.shape[0], features.shape[1])
+
+
+def _window_center_key(value):
+    return float(np.round(float(value), 10))
+
+
+def _window_center_set(values):
+    return {_window_center_key(value) for value in values}
 
 
 def _to_float(value):
