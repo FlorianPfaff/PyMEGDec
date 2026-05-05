@@ -21,8 +21,8 @@ from pymegdec.stimulus_decoding import (
     DEFAULT_ONSET_SCAN_TRAIN_WINDOW_CENTER,
     DEFAULT_ONSET_THRESHOLD_QUANTILE,
     DEFAULT_ONSET_THRESHOLD_WINDOW,
-    StimulusDecodingConfig,
     TRANSFER_DIRECTIONS,
+    StimulusDecodingConfig,
     export_stimulus_onset_scan,
     window_centers_from_range,
 )
