@@ -34,11 +34,14 @@ from pymegdec.stimulus_decoding import (
     StimulusDecodingConfig,
     TRANSFER_DIRECTIONS,
     evaluate_participant_stimulus_decoding_diagnostics,
+    evaluate_participant_stimulus_temporal_generalization,
     evaluate_time_resolved_stimulus_transfer,
+    export_stimulus_temporal_generalization,
     export_time_resolved_stimulus_decoding,
     summarize_stimulus_decoding,
     summarize_stimulus_decoding_peaks,
     summarize_stimulus_prediction_diagnostics,
+    summarize_stimulus_temporal_generalization,
 )
 
 __version__ = "0.1.0"
@@ -60,11 +63,13 @@ __all__ = [
     "compute_alpha_metrics",
     "cross_validate_single_dataset",
     "evaluate_participant_stimulus_decoding_diagnostics",
+    "evaluate_participant_stimulus_temporal_generalization",
     "evaluate_model_transfer",
     "evaluate_time_resolved_stimulus_transfer",
     "export_alpha_movement",
     "export_alpha_movement_analysis",
     "export_participant_alpha_metrics",
+    "export_stimulus_temporal_generalization",
     "export_time_resolved_stimulus_decoding",
     "extract_phase",
     "extract_time_basis",
@@ -74,5 +79,6 @@ __all__ = [
     "summarize_stimulus_decoding",
     "summarize_stimulus_decoding_peaks",
     "summarize_stimulus_prediction_diagnostics",
+    "summarize_stimulus_temporal_generalization",
     "summarize_alpha_movement_effects",
 ]

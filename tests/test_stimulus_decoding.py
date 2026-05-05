@@ -5,10 +5,12 @@ import numpy as np
 from pymegdec.stimulus_decoding import (
     StimulusDecodingConfig,
     evaluate_participant_stimulus_decoding_diagnostics,
+    evaluate_participant_stimulus_temporal_generalization,
     evaluate_participant_time_resolved_stimulus_transfer,
     summarize_stimulus_decoding,
     summarize_stimulus_decoding_peaks,
     summarize_stimulus_prediction_diagnostics,
+    summarize_stimulus_temporal_generalization,
     window_centers_from_range,
 )
 from tests.matlab_fixtures import cell_array
@@ -19,6 +21,16 @@ def _mat_data(labels, trial_values, time):
     trialinfo[0, 0] = np.asarray(labels, dtype=int)
     return {
         "trial": cell_array([np.asarray([[0.0, value]], dtype=float) for value in trial_values]),
+        "time": cell_array([np.asarray([time], dtype=float) for _ in trial_values]),
+        "trialinfo": trialinfo,
+    }
+
+
+def _mat_data_matrix(labels, trial_values, time):
+    trialinfo = np.empty((1, 1), dtype=object)
+    trialinfo[0, 0] = np.asarray(labels, dtype=int)
+    return {
+        "trial": cell_array([np.asarray([values], dtype=float) for values in trial_values]),
         "time": cell_array([np.asarray([time], dtype=float) for _ in trial_values]),
         "trialinfo": trialinfo,
     }
@@ -127,6 +139,66 @@ class TestStimulusDecoding(unittest.TestCase):
         self.assertEqual({row["transfer_direction"] for row in prediction_rows}, {"cue-to-main"})
         self.assertEqual([row["true_stimulus_id"] for row in prediction_rows], labels)
         self.assertTrue(all(row["correct"] for row in prediction_rows))
+
+    def test_evaluate_participant_stimulus_temporal_generalization(self):
+        labels = [1, 2, 1, 2]
+        train_data = _mat_data_matrix(labels, [[-2.0, -2.0], [2.0, 2.0], [-1.0, -1.0], [1.0, 1.0]], [0.0, 0.1])
+        validation_data = _mat_data_matrix(labels, [[-1.5, -1.5], [1.5, 1.5], [-0.5, -0.5], [0.5, 0.5]], [0.0, 0.1])
+        config = StimulusDecodingConfig(
+            window_centers=(0.0, 0.1),
+            window_size=0.0,
+            components_pca=float("inf"),
+            chance_classes=2,
+        )
+
+        with patch(
+            "pymegdec.stimulus_decoding.sio.loadmat",
+            side_effect=[
+                {"data": np.array([train_data], dtype=object)},
+                {"data": np.array([validation_data], dtype=object)},
+            ],
+        ):
+            rows = evaluate_participant_stimulus_temporal_generalization("unused", 1, config=config)
+
+        self.assertEqual(len(rows), 4)
+        self.assertEqual({row["train_window_center_s"] for row in rows}, {0.0, 0.1})
+        self.assertEqual({row["test_window_center_s"] for row in rows}, {0.0, 0.1})
+        self.assertEqual({row["accuracy"] for row in rows}, {1.0})
+        self.assertEqual(sum(row["is_diagonal"] for row in rows), 2)
+        self.assertEqual({row["actual_components_pca"] for row in rows}, {1})
+
+    def test_summarize_stimulus_temporal_generalization(self):
+        rows = [
+            {
+                "variant": "without_null",
+                "train_window_center_s": 0.0,
+                "test_window_center_s": 0.0,
+                "accuracy": 0.25,
+                "chance_accuracy": 0.0625,
+            },
+            {
+                "variant": "without_null",
+                "train_window_center_s": 0.0,
+                "test_window_center_s": 0.0,
+                "accuracy": 0.5,
+                "chance_accuracy": 0.0625,
+            },
+            {
+                "variant": "without_null",
+                "train_window_center_s": 0.0,
+                "test_window_center_s": 0.1,
+                "accuracy": 0.1,
+                "chance_accuracy": 0.0625,
+            },
+        ]
+
+        summary = summarize_stimulus_temporal_generalization(rows)
+
+        self.assertEqual(len(summary), 2)
+        diagonal = [row for row in summary if row["is_diagonal"]][0]
+        self.assertEqual(diagonal["n_participants"], 2)
+        self.assertAlmostEqual(diagonal["accuracy_mean"], 0.375)
+        self.assertEqual(diagonal["above_chance_count"], 2)
 
     def test_evaluate_participant_time_resolved_stimulus_transfer_with_permutations(
         self,

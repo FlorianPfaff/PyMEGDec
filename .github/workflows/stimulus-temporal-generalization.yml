@@ -1,0 +1,492 @@
+name: Manual stimulus temporal generalization
+
+#checkov:skip=CKV_GHA_7:Manual workflow inputs are validated before command use.
+on:
+  workflow_dispatch:
+    inputs:
+      python_version:
+        description: Python version used for the analysis environment.
+        required: true
+        default: "3.13"
+        type: string
+      use_nextcloud_data:
+        description: Restore/download/cache the MEG data before running.
+        required: true
+        default: true
+        type: boolean
+      data_cache_version:
+        description: MEG data cache version.
+        required: true
+        default: v1
+        type: string
+      data_dir:
+        description: Relative data directory to restore/populate.
+        required: true
+        default: .cache/meg-data-all
+        type: string
+      participants:
+        description: Participant ids such as 1-4,6,8.
+        required: true
+        default: "1-4,6,8,9,10,13-27"
+        type: string
+      time_window:
+        description: Train/test window-center range as start,stop in seconds.
+        required: true
+        default: "-0.4,0.8"
+        type: string
+      window_step_s:
+        description: Step between train/test window centers in seconds.
+        required: true
+        default: "0.025"
+        type: string
+      window_size:
+        description: Window size in seconds.
+        required: true
+        default: "0.1"
+        type: string
+      transfer_direction:
+        description: Train/validation dataset direction.
+        required: true
+        default: main-to-cue
+        type: choice
+        options:
+          - main-to-cue
+          - cue-to-main
+      classifier:
+        description: Classifier name passed to the temporal-generalization export.
+        required: true
+        default: multiclass-svm
+        type: choice
+        options:
+          - multiclass-svm
+          - multiclass-svm-weighted
+          - random-forest
+          - gradient-boosting
+          - knn
+          - mostFrequentDummy
+          - always1Dummy
+          - xgboost
+          - scikit-mlp
+          - pytorch-mlp
+      classifier_param:
+        description: Optional classifier parameter, JSON/Python literal/numeric value, or empty.
+        required: false
+        default: ""
+        type: string
+      components_pca:
+        description: Number of PCA components, or inf.
+        required: true
+        default: "100"
+        type: string
+      frequency_low:
+        description: Lower frequency bound in Hz.
+        required: true
+        default: "0"
+        type: string
+      frequency_high:
+        description: Upper frequency bound in Hz, or inf.
+        required: true
+        default: inf
+        type: string
+      chance_classes:
+        description: Number of stimulus classes used for summary chance level.
+        required: true
+        default: "16"
+        type: string
+      install_extra:
+        description: Optional dependency extra to install.
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - xgboost
+          - torch
+          - all
+      output_prefix:
+        description: Prefix for output CSVs under outputs/.
+        required: true
+        default: stimulus_temporal_generalization
+        type: string
+      fail_if_missing_data:
+        description: Fail if data_dir does not exist after optional cache restore/download.
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-inputs:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    outputs:
+      python_version: ${{ steps.validate.outputs.python_version }}
+      use_nextcloud_data: ${{ steps.validate.outputs.use_nextcloud_data }}
+      data_cache_version: ${{ steps.validate.outputs.data_cache_version }}
+      data_dir: ${{ steps.validate.outputs.data_dir }}
+      participants: ${{ steps.validate.outputs.participants }}
+      time_window: ${{ steps.validate.outputs.time_window }}
+      window_step_s: ${{ steps.validate.outputs.window_step_s }}
+      window_size: ${{ steps.validate.outputs.window_size }}
+      transfer_direction: ${{ steps.validate.outputs.transfer_direction }}
+      classifier: ${{ steps.validate.outputs.classifier }}
+      classifier_param: ${{ steps.validate.outputs.classifier_param }}
+      components_pca: ${{ steps.validate.outputs.components_pca }}
+      frequency_low: ${{ steps.validate.outputs.frequency_low }}
+      frequency_high: ${{ steps.validate.outputs.frequency_high }}
+      chance_classes: ${{ steps.validate.outputs.chance_classes }}
+      install_extra: ${{ steps.validate.outputs.install_extra }}
+      output_prefix: ${{ steps.validate.outputs.output_prefix }}
+      fail_if_missing_data: ${{ steps.validate.outputs.fail_if_missing_data }}
+
+    steps:
+      - name: Validate manual inputs
+        id: validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          import re
+          from pathlib import Path, PurePosixPath
+
+          DEFAULTS = {
+              "python_version": "3.13",
+              "use_nextcloud_data": "true",
+              "data_cache_version": "v1",
+              "data_dir": ".cache/meg-data-all",
+              "participants": "1-4,6,8,9,10,13-27",
+              "time_window": "-0.4,0.8",
+              "window_step_s": "0.025",
+              "window_size": "0.1",
+              "transfer_direction": "main-to-cue",
+              "classifier": "multiclass-svm",
+              "classifier_param": "",
+              "components_pca": "100",
+              "frequency_low": "0",
+              "frequency_high": "inf",
+              "chance_classes": "16",
+              "install_extra": "none",
+              "output_prefix": "stimulus_temporal_generalization",
+              "fail_if_missing_data": "true",
+          }
+          ALLOWED_CLASSIFIERS = {
+              "multiclass-svm",
+              "multiclass-svm-weighted",
+              "random-forest",
+              "gradient-boosting",
+              "knn",
+              "mostFrequentDummy",
+              "always1Dummy",
+              "xgboost",
+              "scikit-mlp",
+              "pytorch-mlp",
+          }
+          ALLOWED_EXTRAS = {"none", "xgboost", "torch", "all"}
+          ALLOWED_TRANSFER_DIRECTIONS = {"main-to-cue", "cue-to-main"}
+
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+          raw_inputs = event.get("inputs", {})
+
+          def raw_value(name: str) -> str:
+              value = raw_inputs.get(name, DEFAULTS[name])
+              if value is None:
+                  value = DEFAULTS[name]
+              value = str(value).strip()
+              if value == "" and name != "classifier_param":
+                  value = DEFAULTS[name]
+              if any(char in value for char in "\x00\n\r"):
+                  raise SystemExit(f"Input {name!r} may not contain control characters or newlines.")
+              return value
+
+          def require_match(name: str, pattern: str, *, max_len: int = 128) -> str:
+              value = raw_value(name)
+              if len(value) > max_len or not re.fullmatch(pattern, value):
+                  raise SystemExit(f"Input {name!r} has invalid characters or length.")
+              return value
+
+          def normalize_bool(name: str) -> str:
+              value = raw_value(name).lower()
+              if value in {"true", "1", "yes"}:
+                  return "true"
+              if value in {"false", "0", "no"}:
+                  return "false"
+              raise SystemExit(f"Input {name!r} must be boolean.")
+
+          def normalize_int(name: str, *, minimum: int, maximum: int) -> str:
+              value = require_match(name, r"[0-9]+", max_len=12)
+              parsed = int(value)
+              if not minimum <= parsed <= maximum:
+                  raise SystemExit(f"Input {name!r} must be between {minimum} and {maximum}.")
+              return str(parsed)
+
+          def normalize_float(name: str, *, minimum: float | None = None, allow_inf: bool = False) -> str:
+              value = raw_value(name).lower()
+              if allow_inf and value == "inf":
+                  return "inf"
+              if not re.fullmatch(r"[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?", value):
+                  raise SystemExit(f"Input {name!r} must be a finite number" + (" or inf." if allow_inf else "."))
+              parsed = float(value)
+              if minimum is not None and parsed < minimum:
+                  raise SystemExit(f"Input {name!r} must be >= {minimum}.")
+              return format(parsed, ".12g")
+
+          def normalize_time_window() -> str:
+              value = raw_value("time_window")
+              match = re.fullmatch(r"\s*([-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)\s*,\s*([-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)\s*", value)
+              if not match:
+                  raise SystemExit("Input 'time_window' must have the form start,stop.")
+              start = float(match.group(1))
+              stop = float(match.group(2))
+              if not start < stop:
+                  raise SystemExit("Input 'time_window' start must be smaller than stop.")
+              if start < -10 or stop > 10:
+                  raise SystemExit("Input 'time_window' must stay within [-10, 10] seconds.")
+              return f"{start:.12g},{stop:.12g}"
+
+          def normalize_data_dir() -> str:
+              value = require_match("data_dir", r"[A-Za-z0-9._/-]+", max_len=160)
+              path = PurePosixPath(value)
+              if path.is_absolute() or ".." in path.parts:
+                  raise SystemExit("Input 'data_dir' must be a relative path without '..'.")
+              return value.rstrip("/") or DEFAULTS["data_dir"]
+
+          def normalize_participants() -> str:
+              value = raw_value("participants").replace(" ", "")
+              if len(value) > 256 or not re.fullmatch(r"[0-9,\-]*", value):
+                  raise SystemExit("Input 'participants' must contain only digits, ranges, and commas.")
+              return value
+
+          def normalize_components() -> str:
+              if raw_value("components_pca").lower() == "inf":
+                  return "inf"
+              return normalize_int("components_pca", minimum=1, maximum=100000)
+
+          def normalize_classifier_param() -> str:
+              value = raw_value("classifier_param")
+              if value and (len(value) > 300 or not re.fullmatch(r"[A-Za-z0-9_.,:{}\[\]\"' +\-eE]*", value)):
+                  raise SystemExit("Input 'classifier_param' contains unsupported characters.")
+              return value
+
+          sanitized = {
+              "python_version": require_match("python_version", r"[0-9]+(?:\.[0-9]+){0,2}", max_len=16),
+              "use_nextcloud_data": normalize_bool("use_nextcloud_data"),
+              "data_cache_version": require_match("data_cache_version", r"[A-Za-z0-9._-]+", max_len=64),
+              "data_dir": normalize_data_dir(),
+              "participants": normalize_participants(),
+              "time_window": normalize_time_window(),
+              "window_step_s": normalize_float("window_step_s", minimum=0.001),
+              "window_size": normalize_float("window_size", minimum=0.001),
+              "transfer_direction": require_match("transfer_direction", r"[A-Za-z0-9_-]+", max_len=32),
+              "classifier": require_match("classifier", r"[A-Za-z0-9_-]+", max_len=64),
+              "classifier_param": normalize_classifier_param(),
+              "components_pca": normalize_components(),
+              "frequency_low": normalize_float("frequency_low", minimum=0.0),
+              "frequency_high": normalize_float("frequency_high", minimum=0.0, allow_inf=True),
+              "chance_classes": normalize_int("chance_classes", minimum=2, maximum=10000),
+              "install_extra": require_match("install_extra", r"[A-Za-z0-9_-]+", max_len=32),
+              "output_prefix": require_match("output_prefix", r"[A-Za-z0-9_.-]+", max_len=80),
+              "fail_if_missing_data": normalize_bool("fail_if_missing_data"),
+          }
+          if sanitized["classifier"] not in ALLOWED_CLASSIFIERS:
+              raise SystemExit("Unsupported classifier.")
+          if sanitized["transfer_direction"] not in ALLOWED_TRANSFER_DIRECTIONS:
+              raise SystemExit("Unsupported transfer direction.")
+          if sanitized["install_extra"] not in ALLOWED_EXTRAS:
+              raise SystemExit("Unsupported install extra.")
+          if sanitized["frequency_high"] != "inf" and float(sanitized["frequency_high"]) < float(sanitized["frequency_low"]):
+              raise SystemExit("frequency_high must be >= frequency_low.")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for name, value in sanitized.items():
+                  output.write(f"{name}={value}\n")
+          print(json.dumps(sanitized, indent=2))
+          PY
+
+  temporal-generalization:
+    name: Export temporal generalization
+    needs: prepare-inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      DATA_DIR: ${{ needs.prepare-inputs.outputs.data_dir }}
+      USE_NEXTCLOUD_DATA: ${{ needs.prepare-inputs.outputs.use_nextcloud_data }}
+      DATA_CACHE_VERSION: ${{ needs.prepare-inputs.outputs.data_cache_version }}
+      PARTICIPANTS: ${{ needs.prepare-inputs.outputs.participants }}
+      TIME_WINDOW: ${{ needs.prepare-inputs.outputs.time_window }}
+      WINDOW_STEP_S: ${{ needs.prepare-inputs.outputs.window_step_s }}
+      WINDOW_SIZE: ${{ needs.prepare-inputs.outputs.window_size }}
+      TRANSFER_DIRECTION: ${{ needs.prepare-inputs.outputs.transfer_direction }}
+      CLASSIFIER: ${{ needs.prepare-inputs.outputs.classifier }}
+      CLASSIFIER_PARAM: ${{ needs.prepare-inputs.outputs.classifier_param }}
+      COMPONENTS_PCA: ${{ needs.prepare-inputs.outputs.components_pca }}
+      FREQUENCY_LOW: ${{ needs.prepare-inputs.outputs.frequency_low }}
+      FREQUENCY_HIGH: ${{ needs.prepare-inputs.outputs.frequency_high }}
+      CHANCE_CLASSES: ${{ needs.prepare-inputs.outputs.chance_classes }}
+      INSTALL_EXTRA: ${{ needs.prepare-inputs.outputs.install_extra }}
+      OUTPUT_PREFIX: ${{ needs.prepare-inputs.outputs.output_prefix }}
+      FAIL_IF_MISSING_DATA: ${{ needs.prepare-inputs.outputs.fail_if_missing_data }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Restore cached MEG data
+        id: meg-data-cache
+        if: ${{ env.USE_NEXTCLOUD_DATA == 'true' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.DATA_DIR }}
+          key: meg-data-all-${{ runner.os }}-${{ env.DATA_CACHE_VERSION }}
+
+      - name: Download MEG data files from URL list
+        if: ${{ env.USE_NEXTCLOUD_DATA == 'true' && steps.meg-data-cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        env:
+          MEG_DATA_URL_LIST: ${{ secrets.MEG_DATA_URL_LIST }}
+        run: |
+          set -euo pipefail
+          python3 scripts/download_meg_data_files.py --data-dir "${DATA_DIR}"
+
+      - name: Save MEG data cache
+        if: ${{ env.USE_NEXTCLOUD_DATA == 'true' && steps.meg-data-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: ${{ env.DATA_DIR }}
+          key: meg-data-all-${{ runner.os }}-${{ env.DATA_CACHE_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.prepare-inputs.outputs.python_version }}
+
+      - name: Install package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [[ "${INSTALL_EXTRA}" == "none" ]]; then
+            python -m pip install -e .
+          else
+            python -m pip install -e ".[${INSTALL_EXTRA}]"
+          fi
+
+      - name: Resolve and validate data directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["DATA_DIR"]).expanduser()
+          fail_if_missing = os.environ["FAIL_IF_MISSING_DATA"].lower() == "true"
+
+          if not root.exists():
+              message = f"Data directory does not exist: {root}"
+              if fail_if_missing:
+                  raise SystemExit(message)
+              print(message)
+              with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as env_file:
+                  env_file.write(f"PYMEGDEC_ANALYSIS_DATA_DIR={root}\n")
+              raise SystemExit(0)
+
+          candidate_counts: dict[Path, tuple[int, int]] = {}
+          for main_file in root.rglob("Part*Data.mat"):
+              if main_file.name.endswith("CueData.mat"):
+                  continue
+              directory = main_file.parent
+              main_count, cue_count = candidate_counts.get(directory, (0, 0))
+              candidate_counts[directory] = (main_count + 1, cue_count)
+          for cue_file in root.rglob("Part*CueData.mat"):
+              directory = cue_file.parent
+              main_count, cue_count = candidate_counts.get(directory, (0, 0))
+              candidate_counts[directory] = (main_count, cue_count + 1)
+
+          valid_candidates = [
+              (directory, counts)
+              for directory, counts in candidate_counts.items()
+              if counts[0] > 0 and counts[1] > 0
+          ]
+          if not valid_candidates:
+              message = f"No directory containing both Part*Data.mat and Part*CueData.mat was found under {root}."
+              if fail_if_missing:
+                  raise SystemExit(message)
+              print(message)
+              resolved = root
+          else:
+              resolved, counts = max(valid_candidates, key=lambda item: (item[1][0] + item[1][1], str(item[0])))
+              print(f"Resolved MEG data directory: {resolved}")
+              print(f"Found {counts[0]} main MAT files and {counts[1]} cue MAT files in the resolved directory.")
+
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as env_file:
+              env_file.write(f"PYMEGDEC_ANALYSIS_DATA_DIR={resolved}\n")
+          PY
+
+      - name: Export stimulus temporal generalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p outputs
+
+          output_csv="outputs/${OUTPUT_PREFIX}.csv"
+          summary_csv="outputs/${OUTPUT_PREFIX}_summary.csv"
+
+          cmd=(
+            python scripts/export_stimulus_temporal_generalization.py
+            --data-dir "${PYMEGDEC_ANALYSIS_DATA_DIR}"
+            --participants "${PARTICIPANTS}"
+            "--time-window=${TIME_WINDOW}"
+            --window-step-s "${WINDOW_STEP_S}"
+            --window-size "${WINDOW_SIZE}"
+            --null-window-center nan
+            --transfer-direction "${TRANSFER_DIRECTION}"
+            --classifier "${CLASSIFIER}"
+            --components-pca "${COMPONENTS_PCA}"
+            --frequency-range "${FREQUENCY_LOW}" "${FREQUENCY_HIGH}"
+            --chance-classes "${CHANCE_CLASSES}"
+            --output "${output_csv}"
+            --summary-output "${summary_csv}"
+          )
+
+          if [[ -n "${CLASSIFIER_PARAM}" ]]; then
+            cmd+=(--classifier-param "${CLASSIFIER_PARAM}")
+          fi
+
+          printf 'Running command:'
+          printf ' %q' "${cmd[@]}"
+          printf '\n'
+          "${cmd[@]}"
+
+          {
+            echo "# Stimulus temporal generalization"
+            echo
+            echo "- Data directory: \`${PYMEGDEC_ANALYSIS_DATA_DIR}\`"
+            echo "- Participants: \`${PARTICIPANTS}\`"
+            echo "- Time-window centers: \`${TIME_WINDOW}\`"
+            echo "- Window step: \`${WINDOW_STEP_S}\` s"
+            echo "- Window size: \`${WINDOW_SIZE}\` s"
+            echo "- Transfer direction: \`${TRANSFER_DIRECTION}\`"
+            echo "- Classifier: \`${CLASSIFIER}\`"
+            echo "- PCA components: \`${COMPONENTS_PCA}\`"
+            echo "- Frequency range: \`${FREQUENCY_LOW}\` to \`${FREQUENCY_HIGH}\` Hz"
+            echo
+            echo "The workflow forces \`--null-window-center nan\`; train-window and test-window values define the temporal generalization matrix."
+          } > outputs/README.md
+          cat outputs/README.md >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload temporal generalization outputs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stimulus-temporal-generalization-outputs
+          path: outputs/
+          if-no-files-found: warn
