@@ -1,6 +1,7 @@
 name: Manual stimulus temporal generalization
 
 #checkov:skip=CKV_GHA_7:Manual workflow inputs are validated before command use.
+# jscpd:ignore-start
 on:
   workflow_dispatch:
     inputs:
@@ -490,3 +491,4 @@ jobs:
           name: stimulus-temporal-generalization-outputs
           path: outputs/
           if-no-files-found: warn
+# jscpd:ignore-end

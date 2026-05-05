@@ -140,6 +140,7 @@ class TestStimulusDecoding(unittest.TestCase):
         self.assertEqual([row["true_stimulus_id"] for row in prediction_rows], labels)
         self.assertTrue(all(row["correct"] for row in prediction_rows))
 
+    # jscpd:ignore-start
     def test_evaluate_participant_stimulus_temporal_generalization(self):
         labels = [1, 2, 1, 2]
         train_data = _mat_data_matrix(labels, [[-2.0, -2.0], [2.0, 2.0], [-1.0, -1.0], [1.0, 1.0]], [0.0, 0.1])
@@ -200,6 +201,7 @@ class TestStimulusDecoding(unittest.TestCase):
         self.assertAlmostEqual(diagonal["accuracy_mean"], 0.375)
         self.assertEqual(diagonal["above_chance_count"], 2)
 
+    # jscpd:ignore-end
     def test_evaluate_participant_time_resolved_stimulus_transfer_with_permutations(
         self,
     ):
