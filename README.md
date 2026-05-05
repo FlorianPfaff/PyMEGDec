@@ -191,6 +191,23 @@ python scripts\export_stimulus_temporal_generalization.py `
   --summary-output outputs\part2_stimulus_temporal_generalization_summary.csv
 ```
 
+Onset-blind scanning trains one classifier at a known post-stimulus window and
+slides it over validation trials. This is a pseudo-continuous test with the
+current epoched data: the model is not given `t=0` while scanning, but the
+known onset is still used afterward to score detection latency and false alarms.
+
+```powershell
+python scripts\export_stimulus_onset_scan.py `
+  --participants 2 `
+  --train-window-center 0.175 `
+  --scan-time-window=-0.4,0.8 `
+  --window-step-s 0.025 `
+  --output outputs\part2_stimulus_onset_scan.csv `
+  --events-output outputs\part2_stimulus_onset_events.csv `
+  --summary-output outputs\part2_stimulus_onset_scan_summary.csv `
+  --event-summary-output outputs\part2_stimulus_onset_event_summary.csv
+```
+
 ## Tests
 
 The default suite includes fast tests that run without private MEG files.

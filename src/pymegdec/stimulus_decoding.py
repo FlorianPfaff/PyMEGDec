@@ -28,6 +28,11 @@ DEFAULT_DECODING_TIME_WINDOW = (-0.2, 0.6)
 DEFAULT_DECODING_STEP_S = 0.05
 DEFAULT_STIMULUS_WINDOW_SIZE = 0.1
 DEFAULT_CHANCE_CLASSES = 16
+DEFAULT_ONSET_SCAN_TRAIN_WINDOW_CENTER = 0.175
+DEFAULT_ONSET_SCAN_TIME_WINDOW = (-0.4, 0.8)
+DEFAULT_ONSET_SCAN_STEP_S = 0.025
+DEFAULT_ONSET_THRESHOLD_WINDOW = (-0.35, -0.05)
+DEFAULT_ONSET_THRESHOLD_QUANTILE = 0.95
 TRANSFER_DIRECTIONS = ("main-to-cue", "cue-to-main")
 SUMMARY_GROUP_FIELDS = (
     "control",
@@ -515,6 +520,232 @@ def export_stimulus_temporal_generalization(
 
 
 # jscpd:ignore-end
+# jscpd:ignore-start
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments
+def evaluate_participant_stimulus_onset_scan(
+    data_folder,
+    participant,
+    *,
+    config=None,
+    train_window_center=DEFAULT_ONSET_SCAN_TRAIN_WINDOW_CENTER,
+    threshold_window=DEFAULT_ONSET_THRESHOLD_WINDOW,
+    threshold_quantile=DEFAULT_ONSET_THRESHOLD_QUANTILE,
+    detection_start_s=None,
+):
+    """Scan validation trials for stimulus identity without using onset at test time."""
+
+    config = config or StimulusDecodingConfig(
+        window_centers=window_centers_from_range(DEFAULT_ONSET_SCAN_TIME_WINDOW, DEFAULT_ONSET_SCAN_STEP_S),
+    )
+    classifier_param = config.classifier_param
+    if should_use_default_classifier_param(classifier_param):
+        classifier_param = get_default_classifier_param(config.classifier)
+
+    train_cue, validation_cue = _transfer_direction_cue_flags(config.transfer_direction)
+    train_data = _load_participant_data(data_folder, participant, cue=train_cue)
+    validation_data = _load_participant_data(data_folder, participant, cue=validation_cue)
+    _check_matching_sample_rate(train_data, validation_data)
+
+    labels_train = np.asarray(train_data["trialinfo"][0][0], dtype=int).ravel()
+    labels_validation = np.asarray(validation_data["trialinfo"][0][0], dtype=int).ravel()
+    if np.isnan(config.null_window_center):
+        labels_train = labels_train - 1
+        labels_validation = labels_validation - 1
+
+    train_data = _prepare_data(train_data, config)
+    validation_data = _prepare_data(validation_data, config)
+    model_bundle = _train_window_model(
+        train_data,
+        labels_train,
+        float(train_window_center),
+        classifier_param,
+        config,
+    )
+
+    variant = "without_null" if np.isnan(config.null_window_center) else "with_null"
+    scan_rows = []
+    for scan_window_center in config.window_centers:
+        scan_window_center = float(scan_window_center)
+        validation_features = _validation_features_for_window(validation_data, scan_window_center, config)
+        predictions, scores = _predict_window_model(model_bundle, validation_features)
+        scan_rows.extend(
+            _stimulus_onset_scan_rows(
+                participant,
+                variant,
+                float(train_window_center),
+                scan_window_center,
+                labels_validation,
+                predictions,
+                scores,
+                classifier_param,
+                model_bundle,
+                config,
+                threshold_window,
+                threshold_quantile,
+            )
+        )
+
+    threshold = _score_threshold_from_window(scan_rows, threshold_window, threshold_quantile)
+    _annotate_scan_threshold(scan_rows, threshold)
+    event_rows = _stimulus_onset_event_rows(scan_rows, detection_start_s=detection_start_s)
+    return scan_rows, event_rows
+
+
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments
+def export_stimulus_onset_scan(
+    data_folder,
+    participants,
+    output_path,
+    events_output_path,
+    *,
+    summary_output_path=None,
+    event_summary_output_path=None,
+    config=None,
+    train_window_center=DEFAULT_ONSET_SCAN_TRAIN_WINDOW_CENTER,
+    threshold_window=DEFAULT_ONSET_THRESHOLD_WINDOW,
+    threshold_quantile=DEFAULT_ONSET_THRESHOLD_QUANTILE,
+    detection_start_s=None,
+    progress=None,
+):
+    """Run onset-blind stimulus scanning and write trial/window and event CSVs."""
+
+    config = config or StimulusDecodingConfig(
+        window_centers=window_centers_from_range(DEFAULT_ONSET_SCAN_TIME_WINDOW, DEFAULT_ONSET_SCAN_STEP_S),
+    )
+    data_folder = resolve_data_folder(data_folder)
+    scan_rows = []
+    event_rows = []
+    for participant in participants:
+        if progress is not None:
+            progress(f"START participant={participant}")
+        participant_scan_rows, participant_event_rows = evaluate_participant_stimulus_onset_scan(
+            data_folder,
+            participant,
+            config=config,
+            train_window_center=train_window_center,
+            threshold_window=threshold_window,
+            threshold_quantile=threshold_quantile,
+            detection_start_s=detection_start_s,
+        )
+        scan_rows.extend(participant_scan_rows)
+        event_rows.extend(participant_event_rows)
+        if progress is not None:
+            progress(f"DONE participant={participant}")
+
+    write_alpha_metrics_csv(scan_rows, output_path)
+    write_alpha_metrics_csv(event_rows, events_output_path)
+    summary_rows = summarize_stimulus_onset_scan(scan_rows)
+    if summary_output_path:
+        write_alpha_metrics_csv(summary_rows, summary_output_path)
+    event_summary_rows = summarize_stimulus_onset_events(event_rows)
+    if event_summary_output_path:
+        write_alpha_metrics_csv(event_summary_rows, event_summary_output_path)
+    return scan_rows, event_rows, summary_rows, event_summary_rows
+
+
+def summarize_stimulus_onset_scan(rows):
+    """Summarize onset-blind scan rows by participant and scan window."""
+
+    group_fields = _present_group_fields(
+        rows,
+        (
+            "participant",
+            "variant",
+            "transfer_direction",
+            "train_window_center_s",
+            "scan_window_center_s",
+            "classifier",
+            "components_pca",
+            "frequency_low_hz",
+            "frequency_high_hz",
+        ),
+    )
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[tuple(row.get(field, "") for field in group_fields)].append(row)
+
+    summary_rows = []
+    for key, group_rows in sorted(grouped.items(), key=lambda item: item[0]):
+        correct = [bool(row["correct"]) for row in group_rows]
+        scores = [_to_float(row.get("stimulus_score")) for row in group_rows]
+        finite_scores = [score for score in scores if np.isfinite(score)]
+        above_threshold = [bool(row.get("above_threshold", False)) for row in group_rows]
+        accuracy = float(np.mean(correct)) if correct else np.nan
+        summary_row = dict(zip(group_fields, key))
+        summary_row.update(
+            {
+                "n_trials": len(group_rows),
+                "accuracy": accuracy,
+                "percent": 100.0 * accuracy,
+                "mean_stimulus_score": float(np.mean(finite_scores)) if finite_scores else np.nan,
+                "median_stimulus_score": float(np.median(finite_scores)) if finite_scores else np.nan,
+                "above_threshold_count": sum(above_threshold),
+                "above_threshold_rate": float(np.mean(above_threshold)) if above_threshold else np.nan,
+                "score_threshold": group_rows[0].get("score_threshold", np.nan),
+                "threshold_quantile": group_rows[0].get("threshold_quantile", np.nan),
+                "threshold_window_start_s": group_rows[0].get("threshold_window_start_s", np.nan),
+                "threshold_window_stop_s": group_rows[0].get("threshold_window_stop_s", np.nan),
+                "chance_accuracy": group_rows[0].get("chance_accuracy", np.nan),
+                "chance_percent": group_rows[0].get("chance_percent", np.nan),
+            }
+        )
+        summary_rows.append(summary_row)
+    return summary_rows
+
+
+def summarize_stimulus_onset_events(rows):
+    """Summarize first-detection event rows by participant."""
+
+    group_fields = _present_group_fields(
+        rows,
+        (
+            "participant",
+            "variant",
+            "transfer_direction",
+            "train_window_center_s",
+            "classifier",
+            "components_pca",
+            "frequency_low_hz",
+            "frequency_high_hz",
+        ),
+    )
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[tuple(row.get(field, "") for field in group_fields)].append(row)
+
+    summary_rows = []
+    for key, group_rows in sorted(grouped.items(), key=lambda item: item[0]):
+        detected = [bool(row["detected"]) for row in group_rows]
+        correct_detection = [bool(row["detected"]) and bool(row["correct_detected_stimulus"]) for row in group_rows]
+        false_alarm = [bool(row["detected_before_stimulus"]) for row in group_rows]
+        post_detection_rows = [row for row in group_rows if bool(row["detected"]) and not bool(row["detected_before_stimulus"])]
+        post_latencies = [_to_float(row["detection_latency_s"]) for row in post_detection_rows]
+        post_latencies = [value for value in post_latencies if np.isfinite(value)]
+        summary_row = dict(zip(group_fields, key))
+        summary_row.update(
+            {
+                "n_trials": len(group_rows),
+                "detected_count": sum(detected),
+                "detected_rate": float(np.mean(detected)) if detected else np.nan,
+                "false_alarm_count": sum(false_alarm),
+                "false_alarm_rate": float(np.mean(false_alarm)) if false_alarm else np.nan,
+                "post_stimulus_detected_count": len(post_detection_rows),
+                "post_stimulus_detected_rate": len(post_detection_rows) / len(group_rows) if group_rows else np.nan,
+                "correct_detection_count": sum(correct_detection),
+                "correct_detection_rate": float(np.mean(correct_detection)) if correct_detection else np.nan,
+                "post_detection_latency_mean_s": float(np.mean(post_latencies)) if post_latencies else np.nan,
+                "post_detection_latency_median_s": float(np.median(post_latencies)) if post_latencies else np.nan,
+                "score_threshold": group_rows[0].get("score_threshold", np.nan),
+                "threshold_quantile": group_rows[0].get("threshold_quantile", np.nan),
+                "threshold_window_start_s": group_rows[0].get("threshold_window_start_s", np.nan),
+                "threshold_window_stop_s": group_rows[0].get("threshold_window_stop_s", np.nan),
+            }
+        )
+        summary_rows.append(summary_row)
+    return summary_rows
+
+
+# jscpd:ignore-end
 def _load_participant_data(data_folder, participant, *, cue):
     suffix = "CueData" if cue else "Data"
     path = Path(data_folder) / f"Part{participant}{suffix}.mat"
@@ -596,10 +827,28 @@ def _validation_features_for_window(validation_data, window_center, config):
     return np.hstack(validation_stimuli_features).T
 
 
-def _temporal_generalization_row(participant, labels_train, labels_validation, test_features, train_window_center, test_window_center, classifier_param, model_bundle, config):
+def _predict_window_model(model_bundle, features):
     if model_bundle.pca_coeff is not None:
-        test_features = (test_features - model_bundle.train_features_mean) @ model_bundle.pca_coeff[:, : model_bundle.actual_components_pca]
-    predictions = model_bundle.model.predict(test_features)
+        features = (features - model_bundle.train_features_mean) @ model_bundle.pca_coeff[:, : model_bundle.actual_components_pca]
+    predictions = model_bundle.model.predict(features)
+    scores = _prediction_scores(model_bundle.model, features)
+    return predictions, scores
+
+
+def _prediction_scores(model, features):
+    if hasattr(model, "decision_function"):
+        scores = np.asarray(model.decision_function(features), dtype=float)
+        if scores.ndim == 1:
+            return np.abs(scores)
+        return np.max(scores, axis=1)
+    if hasattr(model, "predict_proba"):
+        scores = np.asarray(model.predict_proba(features), dtype=float)
+        return np.max(scores, axis=1)
+    return np.full(features.shape[0], np.nan, dtype=float)
+
+
+def _temporal_generalization_row(participant, labels_train, labels_validation, test_features, train_window_center, test_window_center, classifier_param, model_bundle, config):
+    predictions, _ = _predict_window_model(model_bundle, test_features)
     accuracy = float(np.mean(predictions == labels_validation))
     chance_accuracy = 1.0 / config.chance_classes
     variant = "without_null" if np.isnan(config.null_window_center) else "with_null"
@@ -631,6 +880,143 @@ def _temporal_generalization_row(participant, labels_train, labels_validation, t
         "pca_explained_variance_percent": model_bundle.explained_variance_percent,
         "frequency_low_hz": config.frequency_range[0],
         "frequency_high_hz": config.frequency_range[1],
+    }
+
+
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments
+def _stimulus_onset_scan_rows(
+    participant,
+    variant,
+    train_window_center,
+    scan_window_center,
+    labels_validation,
+    predictions,
+    scores,
+    classifier_param,
+    model_bundle,
+    config,
+    threshold_window,
+    threshold_quantile,
+):
+    scan_window = _centered_window(scan_window_center, config.window_size)
+    chance_accuracy = 1.0 / config.chance_classes
+    rows = []
+    for trial_idx, (true_label, predicted_label, score) in enumerate(zip(labels_validation, predictions, scores)):
+        true_stimulus = _display_stimulus_label(true_label, variant)
+        predicted_stimulus = _display_stimulus_label(predicted_label, variant)
+        rows.append(
+            {
+                "participant": participant,
+                "variant": variant,
+                "transfer_direction": config.transfer_direction,
+                "train_window_center_s": train_window_center,
+                "train_window_start_s": model_bundle.train_window[0],
+                "train_window_stop_s": model_bundle.train_window[1],
+                "scan_window_center_s": scan_window_center,
+                "scan_window_start_s": scan_window[0],
+                "scan_window_stop_s": scan_window[1],
+                "trial": trial_idx,
+                "validation_trial_index": trial_idx,
+                "validation_trial_number": trial_idx + 1,
+                "true_label": int(true_label),
+                "predicted_label": int(predicted_label),
+                "true_stimulus": true_stimulus,
+                "predicted_stimulus": predicted_stimulus,
+                "true_stimulus_id": true_stimulus,
+                "predicted_stimulus_id": predicted_stimulus,
+                "correct": bool(predicted_label == true_label),
+                "stimulus_score": float(score),
+                "score_threshold": np.nan,
+                "above_threshold": False,
+                "threshold_quantile": threshold_quantile,
+                "threshold_window_start_s": threshold_window[0],
+                "threshold_window_stop_s": threshold_window[1],
+                "chance_accuracy": chance_accuracy,
+                "chance_percent": 100.0 * chance_accuracy,
+                "classifier": config.classifier,
+                "classifier_param": classifier_param,
+                "components_pca": config.components_pca,
+                "actual_components_pca": model_bundle.actual_components_pca,
+                "pca_explained_variance_percent": model_bundle.explained_variance_percent,
+                "frequency_low_hz": config.frequency_range[0],
+                "frequency_high_hz": config.frequency_range[1],
+            }
+        )
+    return rows
+
+
+def _score_threshold_from_window(rows, threshold_window, threshold_quantile):
+    threshold_scores = [_to_float(row["stimulus_score"]) for row in rows if threshold_window[0] <= _to_float(row["scan_window_center_s"]) <= threshold_window[1]]
+    threshold_scores = [score for score in threshold_scores if np.isfinite(score)]
+    if not threshold_scores:
+        return np.nan
+    return float(np.quantile(threshold_scores, threshold_quantile))
+
+
+def _annotate_scan_threshold(rows, threshold):
+    for row in rows:
+        row["score_threshold"] = threshold
+        row["above_threshold"] = bool(np.isfinite(threshold) and _to_float(row["stimulus_score"]) >= threshold)
+
+
+def _stimulus_onset_event_rows(scan_rows, *, detection_start_s=None):
+    rows_by_trial = defaultdict(list)
+    for row in scan_rows:
+        rows_by_trial[row["validation_trial_index"]].append(row)
+
+    event_rows = []
+    for _trial_idx, trial_rows in sorted(rows_by_trial.items()):
+        trial_rows = sorted(trial_rows, key=lambda row: _to_float(row["scan_window_center_s"]))
+        candidates = trial_rows
+        if detection_start_s is not None:
+            candidates = [row for row in trial_rows if _to_float(row["scan_window_center_s"]) >= detection_start_s]
+        detected_rows = [row for row in candidates if bool(row["above_threshold"])]
+        detection_row = detected_rows[0] if detected_rows else None
+        reference_row = trial_rows[0]
+        event_rows.append(_stimulus_onset_event_row(reference_row, detection_row, len(trial_rows), detection_start_s))
+    return event_rows
+
+
+def _stimulus_onset_event_row(reference_row, detection_row, n_scanned_windows, detection_start_s):
+    detected = detection_row is not None
+    detection_center = _to_float(detection_row["scan_window_center_s"]) if detected else np.nan
+    predicted_label = detection_row["predicted_label"] if detected else np.nan
+    predicted_stimulus = detection_row["predicted_stimulus_id"] if detected else np.nan
+    score = detection_row["stimulus_score"] if detected else np.nan
+    correct_detected_stimulus = bool(detection_row["correct"]) if detected else False
+    return {
+        "participant": reference_row["participant"],
+        "variant": reference_row["variant"],
+        "transfer_direction": reference_row["transfer_direction"],
+        "train_window_center_s": reference_row["train_window_center_s"],
+        "train_window_start_s": reference_row["train_window_start_s"],
+        "train_window_stop_s": reference_row["train_window_stop_s"],
+        "validation_trial_index": reference_row["validation_trial_index"],
+        "validation_trial_number": reference_row["validation_trial_number"],
+        "true_label": reference_row["true_label"],
+        "true_stimulus": reference_row["true_stimulus"],
+        "true_stimulus_id": reference_row["true_stimulus_id"],
+        "detected": detected,
+        "detection_window_center_s": detection_center,
+        "detection_window_start_s": detection_row["scan_window_start_s"] if detected else np.nan,
+        "detection_window_stop_s": detection_row["scan_window_stop_s"] if detected else np.nan,
+        "detection_latency_s": detection_center,
+        "detected_before_stimulus": bool(detected and detection_center < 0.0),
+        "predicted_label_at_detection": predicted_label,
+        "predicted_stimulus_id_at_detection": predicted_stimulus,
+        "correct_detected_stimulus": correct_detected_stimulus,
+        "stimulus_score_at_detection": score,
+        "score_threshold": reference_row["score_threshold"],
+        "threshold_quantile": reference_row["threshold_quantile"],
+        "threshold_window_start_s": reference_row["threshold_window_start_s"],
+        "threshold_window_stop_s": reference_row["threshold_window_stop_s"],
+        "detection_start_s": detection_start_s if detection_start_s is not None else np.nan,
+        "n_scanned_windows": n_scanned_windows,
+        "classifier": reference_row["classifier"],
+        "components_pca": reference_row["components_pca"],
+        "actual_components_pca": reference_row["actual_components_pca"],
+        "frequency_low_hz": reference_row["frequency_low_hz"],
+        "frequency_high_hz": reference_row["frequency_high_hz"],
     }
 
 
