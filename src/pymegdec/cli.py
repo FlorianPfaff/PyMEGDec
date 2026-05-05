@@ -29,8 +29,8 @@ from .stimulus_decoding import (
     DEFAULT_DECODING_STEP_S,
     DEFAULT_DECODING_TIME_WINDOW,
     DEFAULT_STIMULUS_WINDOW_SIZE,
-    StimulusDecodingConfig,
     TRANSFER_DIRECTIONS,
+    StimulusDecodingConfig,
     export_time_resolved_stimulus_decoding,
     window_centers_from_range,
 )

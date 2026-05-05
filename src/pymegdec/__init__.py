@@ -31,8 +31,8 @@ from pymegdec.reaction_time_analysis import (
     join_alpha_reaction_times,
 )
 from pymegdec.stimulus_decoding import (
-    StimulusDecodingConfig,
     TRANSFER_DIRECTIONS,
+    StimulusDecodingConfig,
     evaluate_participant_stimulus_decoding_diagnostics,
     evaluate_participant_stimulus_temporal_generalization,
     evaluate_time_resolved_stimulus_transfer,

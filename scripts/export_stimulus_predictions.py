@@ -16,8 +16,8 @@ from pymegdec.reaction_time_analysis import (
     parse_participant_spec,
 )
 from pymegdec.stimulus_decoding import (
-    StimulusDecodingConfig,
     TRANSFER_DIRECTIONS,
+    StimulusDecodingConfig,
     evaluate_participant_stimulus_decoding_diagnostics,
     summarize_stimulus_decoding,
     summarize_stimulus_prediction_diagnostics,
