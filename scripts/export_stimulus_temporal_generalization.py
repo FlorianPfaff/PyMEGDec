@@ -16,8 +16,8 @@ from export_stimulus_predictions import (
 )
 from pymegdec.data_config import resolve_data_folder
 from pymegdec.stimulus_decoding import (
-    StimulusDecodingConfig,
     TRANSFER_DIRECTIONS,
+    StimulusDecodingConfig,
     export_stimulus_temporal_generalization,
     window_centers_from_range,
 )
