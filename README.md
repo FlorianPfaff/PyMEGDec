@@ -177,6 +177,20 @@ python scripts\export_stimulus_robustness.py `
   --summary-output outputs\stimulus_robustness_summary.csv
 ```
 
+Temporal generalization trains a separate model at each training window and
+tests each model across all validation windows. This produces a train-time by
+test-time matrix for assessing whether image information is transient or
+generalizes across post-stimulus time.
+
+```powershell
+python scripts\export_stimulus_temporal_generalization.py `
+  --participants 2 `
+  --time-window=-0.4,0.8 `
+  --window-step-s 0.025 `
+  --output outputs\part2_stimulus_temporal_generalization.csv `
+  --summary-output outputs\part2_stimulus_temporal_generalization_summary.csv
+```
+
 ## Tests
 
 The default suite includes fast tests that run without private MEG files.

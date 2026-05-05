@@ -40,6 +40,16 @@ SUMMARY_GROUP_FIELDS = (
     "frequency_low_hz",
     "frequency_high_hz",
 )
+TEMPORAL_GENERALIZATION_SUMMARY_GROUP_FIELDS = (
+    "transfer_direction",
+    "variant",
+    "train_window_center_s",
+    "test_window_center_s",
+    "classifier",
+    "components_pca",
+    "frequency_low_hz",
+    "frequency_high_hz",
+)
 DEFAULT_WINDOW_CENTERS = tuple(
     float(value)
     for value in np.round(
@@ -139,6 +149,68 @@ def evaluate_participant_stimulus_decoding_diagnostics(
     )
 
 
+# jscpd:ignore-start
+def evaluate_participant_stimulus_temporal_generalization(
+    data_folder,
+    participant,
+    *,
+    config=None,
+):
+    """Evaluate train-time/test-time stimulus decoding for one participant."""
+
+    config = config or StimulusDecodingConfig()
+    classifier_param = config.classifier_param
+    if should_use_default_classifier_param(classifier_param):
+        classifier_param = get_default_classifier_param(config.classifier)
+
+    train_cue, validation_cue = _transfer_direction_cue_flags(config.transfer_direction)
+    train_data = _load_participant_data(data_folder, participant, cue=train_cue)
+    validation_data = _load_participant_data(data_folder, participant, cue=validation_cue)
+    _check_matching_sample_rate(train_data, validation_data)
+
+    labels_train = np.asarray(train_data["trialinfo"][0][0], dtype=int).ravel()
+    labels_validation = np.asarray(validation_data["trialinfo"][0][0], dtype=int).ravel()
+    if np.isnan(config.null_window_center):
+        labels_train = labels_train - 1
+        labels_validation = labels_validation - 1
+
+    if not np.array_equal(np.unique(labels_train), np.unique(labels_validation)):
+        warnings.warn("There are labels in the training or validation experiment that are not in the other experiment.")
+
+    train_data = _prepare_data(train_data, config)
+    validation_data = _prepare_data(validation_data, config)
+    validation_features_by_center = {
+        _window_center_key(window_center): _validation_features_for_window(validation_data, float(window_center), config) for window_center in config.window_centers
+    }
+
+    rows = []
+    for train_window_center in config.window_centers:
+        model_bundle = _train_window_model(
+            train_data,
+            labels_train,
+            float(train_window_center),
+            classifier_param,
+            config,
+        )
+        for test_window_center in config.window_centers:
+            test_features = validation_features_by_center[_window_center_key(test_window_center)]
+            rows.append(
+                _temporal_generalization_row(
+                    participant,
+                    labels_train,
+                    labels_validation,
+                    test_features,
+                    float(train_window_center),
+                    float(test_window_center),
+                    classifier_param,
+                    model_bundle,
+                    config,
+                )
+            )
+    return rows
+
+
+# jscpd:ignore-end
 def _evaluate_participant_time_resolved_stimulus_transfer(
     data_folder,
     participant,
@@ -313,6 +385,45 @@ def summarize_stimulus_prediction_diagnostics(prediction_rows):
     return confusion_rows, per_stimulus_rows
 
 
+# jscpd:ignore-start
+def summarize_stimulus_temporal_generalization(rows):
+    """Summarize temporal-generalization rows across participants."""
+
+    group_fields = _present_group_fields(rows, TEMPORAL_GENERALIZATION_SUMMARY_GROUP_FIELDS)
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[tuple(row.get(field, "") for field in group_fields)].append(row)
+
+    summary_rows = []
+    for key, group_rows in sorted(grouped.items(), key=lambda item: item[0]):
+        accuracies = [_to_float(row["accuracy"]) for row in group_rows]
+        mean, std, sem = _summary_stats(accuracies)
+        percentages = [100.0 * value for value in accuracies if np.isfinite(value)]
+        median = float(np.median(percentages)) if percentages else np.nan
+        chance_accuracy = _to_float(group_rows[0]["chance_accuracy"])
+        diagonal_values = {_window_center_key(row["train_window_center_s"]) == _window_center_key(row["test_window_center_s"]) for row in group_rows}
+        summary_row = dict(zip(group_fields, key))
+        summary_row.update(
+            {
+                "n_participants": len(group_rows),
+                "accuracy_mean": mean,
+                "accuracy_std": std,
+                "accuracy_sem": sem,
+                "percent_mean": 100.0 * mean,
+                "percent_median": median,
+                "percent_std": 100.0 * std,
+                "percent_sem": 100.0 * sem,
+                "chance_accuracy": chance_accuracy,
+                "chance_percent": 100.0 * chance_accuracy,
+                "above_chance_count": sum(value > chance_accuracy for value in accuracies),
+                "is_diagonal": bool(diagonal_values == {True}),
+            }
+        )
+        summary_rows.append(summary_row)
+    return summary_rows
+
+
+# jscpd:ignore-end
 def write_stimulus_decoding_plots(summary_rows, output_dir):
     """Write group-level stimulus decoding plots."""
 
@@ -375,6 +486,35 @@ def export_time_resolved_stimulus_decoding(
     return rows, summary_rows
 
 
+# jscpd:ignore-start
+def export_stimulus_temporal_generalization(
+    data_folder,
+    participants,
+    output_path,
+    *,
+    summary_output_path=None,
+    config=None,
+    progress=None,
+):
+    """Run stimulus temporal generalization and write CSV artifacts."""
+
+    config = config or StimulusDecodingConfig()
+    data_folder = resolve_data_folder(data_folder)
+    rows = []
+    for participant in participants:
+        if progress is not None:
+            progress(f"START participant={participant}")
+        rows.extend(evaluate_participant_stimulus_temporal_generalization(data_folder, participant, config=config))
+        if progress is not None:
+            progress(f"DONE participant={participant}")
+    write_alpha_metrics_csv(rows, output_path)
+    summary_rows = summarize_stimulus_temporal_generalization(rows)
+    if summary_output_path:
+        write_alpha_metrics_csv(summary_rows, summary_output_path)
+    return rows, summary_rows
+
+
+# jscpd:ignore-end
 def _load_participant_data(data_folder, participant, *, cue):
     suffix = "CueData" if cue else "Data"
     path = Path(data_folder) / f"Part{participant}{suffix}.mat"
@@ -404,6 +544,97 @@ def _prepare_data(data, config):
     return data
 
 
+# jscpd:ignore-start
+@dataclass(frozen=True)
+class _WindowModelBundle:
+    model: object
+    train_window: tuple[float, float]
+    train_labels: np.ndarray
+    pca_coeff: np.ndarray | None
+    train_features_mean: np.ndarray | None
+    explained_variance_percent: float
+    actual_components_pca: int
+
+
+def _train_window_model(train_data, labels_train, window_center, classifier_param, config):
+    train_window = _centered_window(window_center, config.window_size)
+    null_window = _null_window(config)
+    train_stimuli_features, train_null_features = extract_windows(train_data, train_window, null_window)
+    train_features = np.hstack(train_stimuli_features + train_null_features).T
+    train_labels = labels_train
+    if train_null_features:
+        train_labels = np.concatenate((labels_train, np.zeros(len(train_null_features), dtype=int)))
+
+    pca_components = _actual_pca_components(config.components_pca, train_features)
+    pca_coeff = None
+    train_features_mean = None
+    explained_variance = np.nan
+    if config.components_pca != float("inf"):
+        train_features, pca_coeff, train_features_mean, explained_variance = reduce_features_pca(train_features, int(config.components_pca))
+
+    model = train_multiclass_classifier(
+        train_features,
+        train_labels,
+        config.classifier,
+        classifier_param,
+        random_state=config.random_state,
+    )
+    return _WindowModelBundle(
+        model=model,
+        train_window=train_window,
+        train_labels=train_labels,
+        pca_coeff=pca_coeff,
+        train_features_mean=train_features_mean,
+        explained_variance_percent=explained_variance,
+        actual_components_pca=pca_components,
+    )
+
+
+def _validation_features_for_window(validation_data, window_center, config):
+    test_window = _centered_window(window_center, config.window_size)
+    validation_stimuli_features, _ = extract_windows(validation_data, test_window, (np.nan, np.nan))
+    return np.hstack(validation_stimuli_features).T
+
+
+def _temporal_generalization_row(participant, labels_train, labels_validation, test_features, train_window_center, test_window_center, classifier_param, model_bundle, config):
+    if model_bundle.pca_coeff is not None:
+        test_features = (test_features - model_bundle.train_features_mean) @ model_bundle.pca_coeff[:, : model_bundle.actual_components_pca]
+    predictions = model_bundle.model.predict(test_features)
+    accuracy = float(np.mean(predictions == labels_validation))
+    chance_accuracy = 1.0 / config.chance_classes
+    variant = "without_null" if np.isnan(config.null_window_center) else "with_null"
+    test_window = _centered_window(test_window_center, config.window_size)
+    return {
+        "participant": participant,
+        "variant": variant,
+        "transfer_direction": config.transfer_direction,
+        "train_window_center_s": train_window_center,
+        "train_window_start_s": model_bundle.train_window[0],
+        "train_window_stop_s": model_bundle.train_window[1],
+        "test_window_center_s": test_window_center,
+        "test_window_start_s": test_window[0],
+        "test_window_stop_s": test_window[1],
+        "is_diagonal": _window_center_key(train_window_center) == _window_center_key(test_window_center),
+        "accuracy": accuracy,
+        "percent": 100.0 * accuracy,
+        "chance_accuracy": chance_accuracy,
+        "chance_percent": 100.0 * chance_accuracy,
+        "above_chance": accuracy > chance_accuracy,
+        "n_train_trials": len(labels_train),
+        "n_validation_trials": len(labels_validation),
+        "n_train_classes": len(np.unique(labels_train)),
+        "n_validation_classes": len(np.unique(labels_validation)),
+        "classifier": config.classifier,
+        "classifier_param": classifier_param,
+        "components_pca": config.components_pca,
+        "actual_components_pca": model_bundle.actual_components_pca,
+        "pca_explained_variance_percent": model_bundle.explained_variance_percent,
+        "frequency_low_hz": config.frequency_range[0],
+        "frequency_high_hz": config.frequency_range[1],
+    }
+
+
+# jscpd:ignore-end
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals
 def _evaluate_window(
     train_data,
