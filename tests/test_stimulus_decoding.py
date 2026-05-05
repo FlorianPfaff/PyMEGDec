@@ -5,10 +5,13 @@ import numpy as np
 from pymegdec.stimulus_decoding import (
     StimulusDecodingConfig,
     evaluate_participant_stimulus_decoding_diagnostics,
+    evaluate_participant_stimulus_onset_scan,
     evaluate_participant_stimulus_temporal_generalization,
     evaluate_participant_time_resolved_stimulus_transfer,
     summarize_stimulus_decoding,
     summarize_stimulus_decoding_peaks,
+    summarize_stimulus_onset_events,
+    summarize_stimulus_onset_scan,
     summarize_stimulus_prediction_diagnostics,
     summarize_stimulus_temporal_generalization,
     window_centers_from_range,
@@ -200,6 +203,119 @@ class TestStimulusDecoding(unittest.TestCase):
         self.assertEqual(diagonal["n_participants"], 2)
         self.assertAlmostEqual(diagonal["accuracy_mean"], 0.375)
         self.assertEqual(diagonal["above_chance_count"], 2)
+
+    # jscpd:ignore-end
+    # jscpd:ignore-start
+    def test_evaluate_participant_stimulus_onset_scan(self):
+        labels = [1, 2, 1, 2]
+        train_data = _mat_data_matrix(labels, [[-2.0, -2.0], [2.0, 2.0], [-1.0, -1.0], [1.0, 1.0]], [-0.1, 0.0])
+        validation_data = _mat_data_matrix(labels, [[-1.5, -1.5], [1.5, 1.5], [-0.5, -0.5], [0.5, 0.5]], [-0.1, 0.0])
+        config = StimulusDecodingConfig(
+            window_centers=(-0.1, 0.0),
+            window_size=0.0,
+            components_pca=float("inf"),
+            chance_classes=2,
+        )
+
+        with patch(
+            "pymegdec.stimulus_decoding.sio.loadmat",
+            side_effect=[
+                {"data": np.array([train_data], dtype=object)},
+                {"data": np.array([validation_data], dtype=object)},
+            ],
+        ):
+            scan_rows, event_rows = evaluate_participant_stimulus_onset_scan(
+                "unused",
+                1,
+                config=config,
+                train_window_center=0.0,
+                threshold_window=(-0.1, -0.1),
+                threshold_quantile=0.0,
+                detection_start_s=0.0,
+            )
+
+        self.assertEqual(len(scan_rows), 8)
+        self.assertEqual(len(event_rows), 4)
+        self.assertEqual({row["scan_window_center_s"] for row in scan_rows}, {-0.1, 0.0})
+        self.assertTrue(all(np.isfinite(row["stimulus_score"]) for row in scan_rows))
+        self.assertTrue(all(np.isfinite(row["score_threshold"]) for row in scan_rows))
+        self.assertTrue(all(row["detected"] for row in event_rows))
+        self.assertTrue(all(row["detection_window_center_s"] == 0.0 for row in event_rows))
+        self.assertTrue(all(row["correct_detected_stimulus"] for row in event_rows))
+
+    def test_summarize_stimulus_onset_scan_and_events(self):
+        scan_rows = [
+            {
+                "participant": 1,
+                "variant": "without_null",
+                "transfer_direction": "main-to-cue",
+                "train_window_center_s": 0.175,
+                "scan_window_center_s": -0.1,
+                "classifier": "multiclass-svm",
+                "components_pca": 100,
+                "frequency_low_hz": 0.0,
+                "frequency_high_hz": float("inf"),
+                "correct": False,
+                "stimulus_score": 0.5,
+                "above_threshold": False,
+                "score_threshold": 1.0,
+                "threshold_quantile": 0.95,
+                "threshold_window_start_s": -0.35,
+                "threshold_window_stop_s": -0.05,
+                "chance_accuracy": 0.0625,
+                "chance_percent": 6.25,
+            },
+            {
+                "participant": 1,
+                "variant": "without_null",
+                "transfer_direction": "main-to-cue",
+                "train_window_center_s": 0.175,
+                "scan_window_center_s": -0.1,
+                "classifier": "multiclass-svm",
+                "components_pca": 100,
+                "frequency_low_hz": 0.0,
+                "frequency_high_hz": float("inf"),
+                "correct": True,
+                "stimulus_score": 1.5,
+                "above_threshold": True,
+                "score_threshold": 1.0,
+                "threshold_quantile": 0.95,
+                "threshold_window_start_s": -0.35,
+                "threshold_window_stop_s": -0.05,
+                "chance_accuracy": 0.0625,
+                "chance_percent": 6.25,
+            },
+        ]
+        event_rows = [
+            {
+                "participant": 1,
+                "variant": "without_null",
+                "transfer_direction": "main-to-cue",
+                "train_window_center_s": 0.175,
+                "classifier": "multiclass-svm",
+                "components_pca": 100,
+                "frequency_low_hz": 0.0,
+                "frequency_high_hz": float("inf"),
+                "detected": True,
+                "detected_before_stimulus": False,
+                "correct_detected_stimulus": True,
+                "detection_latency_s": 0.175,
+                "score_threshold": 1.0,
+                "threshold_quantile": 0.95,
+                "threshold_window_start_s": -0.35,
+                "threshold_window_stop_s": -0.05,
+            }
+        ]
+
+        scan_summary = summarize_stimulus_onset_scan(scan_rows)
+        event_summary = summarize_stimulus_onset_events(event_rows)
+
+        self.assertEqual(len(scan_summary), 1)
+        self.assertAlmostEqual(scan_summary[0]["accuracy"], 0.5)
+        self.assertAlmostEqual(scan_summary[0]["above_threshold_rate"], 0.5)
+        self.assertEqual(len(event_summary), 1)
+        self.assertAlmostEqual(event_summary[0]["detected_rate"], 1.0)
+        self.assertAlmostEqual(event_summary[0]["post_detection_latency_mean_s"], 0.175)
 
     # jscpd:ignore-end
     def test_evaluate_participant_time_resolved_stimulus_transfer_with_permutations(
