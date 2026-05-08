@@ -76,6 +76,38 @@ def _run_script(relative_path: str, argv: Sequence[str], prog: str) -> int:
     return 0
 
 
+def alpha_metrics(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
+    return _run_script("export_alpha_metrics.py", sys.argv[1:] if argv is None else argv, prog or "pymegdec-alpha-metrics")
+
+
+def alpha_movement(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
+    return _run_script("analyze_alpha_movement.py", sys.argv[1:] if argv is None else argv, prog or "pymegdec-alpha-movement")
+
+
+def alpha_reaction_time(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
+    return _run_script("analyze_alpha_reaction_time.py", sys.argv[1:] if argv is None else argv, prog or "pymegdec-alpha-reaction-time")
+
+
+def stimulus_predictions(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
+    return _run_script("scripts/export_stimulus_predictions.py", sys.argv[1:] if argv is None else argv, prog or "pymegdec-stimulus-predictions")
+
+
+def stimulus_robustness(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
+    return _run_script("scripts/export_stimulus_robustness.py", sys.argv[1:] if argv is None else argv, prog or "pymegdec-stimulus-robustness")
+
+
+def stimulus_temporal_generalization(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
+    return _run_script(
+        "scripts/export_stimulus_temporal_generalization.py",
+        sys.argv[1:] if argv is None else argv,
+        prog or "pymegdec-stimulus-temporal-generalization",
+    )
+
+
+def stimulus_onset_scan(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
+    return _run_script("scripts/export_stimulus_onset_scan.py", sys.argv[1:] if argv is None else argv, prog or "pymegdec-stimulus-onset-scan")
+
+
 def _resolve_command(argv: Sequence[str]):
     two_token = tuple(argv[:2])
     if two_token in _LEGACY_COMMANDS:
