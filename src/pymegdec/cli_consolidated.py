@@ -59,15 +59,16 @@ def _script_path(relative_path: str) -> Path:
 
 
 def _run_script(relative_path: str, argv: Sequence[str], prog: str) -> int:
+    script_path = _script_path(relative_path)
     original_argv = sys.argv
     original_path = list(sys.path)
     sys.argv = [prog, *argv]
-    for path in (_REPO_ROOT, _REPO_ROOT / "src"):
+    for path in (_REPO_ROOT, _REPO_ROOT / "src", script_path.parent):
         path_text = str(path)
         if path_text not in sys.path:
             sys.path.insert(0, path_text)
     try:
-        runpy.run_path(str(_script_path(relative_path)), run_name="__main__")
+        runpy.run_path(str(script_path), run_name="__main__")
     except SystemExit as exc:
         return int(exc.code) if isinstance(exc.code, int) else 0
     finally:
