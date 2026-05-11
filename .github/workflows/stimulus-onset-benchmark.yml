@@ -217,6 +217,31 @@ jobs:
           fi
           "${args[@]}"
 
+      - name: Run point operating-point sweep
+        if: ${{ env.RUN_POINT_BASELINE == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            python scripts/export_stimulus_onset_operating_point_sweep.py
+            --scan-input outputs/stimulus_onset_scan_point.csv
+            "--threshold-window=${THRESHOLD_WINDOW}"
+            --threshold-quantiles 0.95,0.975,0.99
+            --min-consecutives 1,2,3
+            --min-durations 0.025,0.05,0.075
+            --max-false-alarm-rate 0.05
+            --events-output outputs/stimulus_onset_events_point_sweep.csv
+            --event-summary-output outputs/stimulus_onset_event_summary_point_sweep.csv
+            --summary-output outputs/stimulus_onset_operating_point_sweep.csv
+            --selected-output outputs/stimulus_onset_operating_point_selected.csv
+            --selected-events-output outputs/stimulus_onset_events_point_selected.csv
+            --selected-event-summary-output outputs/stimulus_onset_event_summary_point_selected.csv
+          )
+          if [[ -n "${DETECTION_START_S}" ]]; then
+            args+=(--detection-start-s "${DETECTION_START_S}")
+          fi
+          "${args[@]}"
+
       - name: Summarize onset quality
         shell: bash
         run: |
@@ -224,28 +249,78 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import os
+          import numpy as np
           import pandas as pd
 
           rows = []
 
-          def add(label, path):
+          def _first_value(frame, column):
+              if column not in frame.columns:
+                  return np.nan
+              values = frame[column].dropna()
+              return values.iloc[0] if not values.empty else np.nan
+
+          def _conditional_correct(correct_rate, detected_rate):
+              try:
+                  correct_rate = float(correct_rate)
+                  detected_rate = float(detected_rate)
+              except (TypeError, ValueError):
+                  return np.nan
+              if not np.isfinite(correct_rate) or not np.isfinite(detected_rate) or detected_rate == 0:
+                  return np.nan
+              return correct_rate / detected_rate
+
+          def add_event_summary(label, path):
               path = Path(path)
               if not path.exists():
                   return
               frame = pd.read_csv(path)
+              false_alarm_rate = frame["false_alarm_rate"].mean()
+              post_detected_rate = frame["post_stimulus_detected_rate"].mean()
+              correct_rate = frame["correct_detection_rate"].mean()
               rows.append({
                   "setting": label,
+                  "threshold_quantile": _first_value(frame, "threshold_quantile"),
+                  "min_consecutive": _first_value(frame, "min_consecutive"),
+                  "min_duration_s": _first_value(frame, "min_duration_s"),
                   "summary_rows": len(frame),
                   "participants": frame["participant"].nunique() if "participant" in frame.columns else len(frame),
-                  "false_alarm_rate_mean": frame["false_alarm_rate"].mean(),
-                  "post_stimulus_detected_rate_mean": frame["post_stimulus_detected_rate"].mean(),
-                  "correct_detection_rate_mean": frame["correct_detection_rate"].mean(),
+                  "false_alarm_rate_mean": false_alarm_rate,
+                  "post_stimulus_detected_rate_mean": post_detected_rate,
+                  "correct_detection_rate_mean": correct_rate,
+                  "conditional_correct_detection_rate": _conditional_correct(correct_rate, post_detected_rate),
                   "median_latency_s": frame["post_detection_latency_median_s"].median(),
                   "mean_latency_s": frame["post_detection_latency_mean_s"].mean(),
               })
 
-          add("robust_max_run", "outputs/stimulus_onset_event_summary_robust.csv")
-          add("point_baseline", "outputs/stimulus_onset_event_summary_point.csv")
+          def add_selected_operating_point(path):
+              path = Path(path)
+              if not path.exists():
+                  return
+              frame = pd.read_csv(path)
+              if frame.empty:
+                  return
+              selected = frame.iloc[0].to_dict()
+              rows.append({
+                  "setting": "point_sweep_selected",
+                  "threshold_quantile": selected.get("threshold_quantile", np.nan),
+                  "min_consecutive": selected.get("min_consecutive", np.nan),
+                  "min_duration_s": selected.get("min_duration_s", np.nan),
+                  "summary_rows": selected.get("summary_rows", np.nan),
+                  "participants": selected.get("participants", np.nan),
+                  "false_alarm_rate_mean": selected.get("false_alarm_rate_mean", np.nan),
+                  "post_stimulus_detected_rate_mean": selected.get("post_stimulus_detected_rate_mean", np.nan),
+                  "correct_detection_rate_mean": selected.get("correct_detection_rate_mean", np.nan),
+                  "conditional_correct_detection_rate": selected.get("conditional_correct_detection_rate", np.nan),
+                  "median_latency_s": selected.get("median_latency_s", np.nan),
+                  "mean_latency_s": selected.get("mean_latency_s", np.nan),
+                  "meets_false_alarm_constraint": selected.get("meets_false_alarm_constraint", np.nan),
+                  "selected_feasible": selected.get("selected_feasible", np.nan),
+              })
+
+          add_event_summary("robust_max_run", "outputs/stimulus_onset_event_summary_robust.csv")
+          add_event_summary("point_baseline", "outputs/stimulus_onset_event_summary_point.csv")
+          add_selected_operating_point("outputs/stimulus_onset_operating_point_selected.csv")
 
           table = pd.DataFrame(rows)
           table.to_csv("outputs/stimulus_onset_quality_summary.csv", index=False)
@@ -259,13 +334,30 @@ jobs:
           else:
               plain_table = table.to_string(index=False, float_format=lambda value: f"{value:.4f}")
               table_block = f"```\n{plain_table}\n```"
+
+          selected_line = ""
+          selected_path = Path("outputs/stimulus_onset_operating_point_selected.csv")
+          if selected_path.exists():
+              selected_frame = pd.read_csv(selected_path)
+              if not selected_frame.empty:
+                  selected = selected_frame.iloc[0]
+                  selected_line = (
+                      "Selected point sweep operating point: "
+                      f"`threshold_quantile={selected['threshold_quantile']}`, "
+                      f"`min_consecutive={selected['min_consecutive']}`, "
+                      f"`min_duration_s={selected['min_duration_s']}`."
+                  )
+
           text = "\n".join([
               "# Stimulus onset benchmark",
               "",
               "Lower false-alarm rate is better. Post-stimulus detection and correct-at-detection should stay meaningfully above chance.",
               mode_line,
+              "The point operating-point sweep reuses `outputs/stimulus_onset_scan_point.csv`; it does not rerun MEG decoding.",
               "",
               table_block,
+              "",
+              selected_line,
               "",
           ])
           Path("outputs/README.md").write_text(text, encoding="utf-8")
