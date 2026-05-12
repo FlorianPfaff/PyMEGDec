@@ -113,12 +113,15 @@ jobs:
 
       - name: Prepare main MEG data
         if: ${{ env.USE_NEXTCLOUD_DATA == 'true' }}
+        timeout-minutes: 90
         uses: ./.github/actions/prepare-meg-data
         with:
           data-dir: ${{ env.DATA_DIR }}
           cache-version: ${{ env.DATA_CACHE_VERSION }}
+          cache-key: meg-data-main-${{ runner.os }}-${{ env.DATA_CACHE_VERSION }}
           file-names: ${{ env.MAIN_FILE_NAMES }}
           require-cue-files: "false"
+          expected-main-files: "23"
           webdav-url: ${{ secrets.BUSHMEG_WEBDAV_URL }}
           webdav-user: ${{ secrets.BUSHMEG_DATA_KEY }}
           webdav-password: ${{ secrets.BUSHMEG_DATA_PASSWORD }}
