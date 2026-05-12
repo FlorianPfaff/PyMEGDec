@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if ! command -v rclone >/dev/null 2>&1; then
+install_standalone_rclone() {
 	mkdir -p "$RUNNER_TEMP/rclone-bin" "$RUNNER_TEMP/rclone-download"
 	curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.zip -o "$RUNNER_TEMP/rclone-download/rclone.zip"
 	python3 - <<'PY'
@@ -25,6 +25,13 @@ target.chmod(0o755)
 PY
 	echo "$RUNNER_TEMP/rclone-bin" >>"$GITHUB_PATH"
 	export PATH="$RUNNER_TEMP/rclone-bin:$PATH"
+}
+
+if command -v rclone >/dev/null 2>&1 && rclone version >/dev/null 2>&1; then
+	echo "Using existing rclone at $(command -v rclone)"
+else
+	echo "Installing standalone rclone binary"
+	install_standalone_rclone
 fi
 
 rclone version
