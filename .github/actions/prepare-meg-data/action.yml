@@ -37,6 +37,14 @@ inputs:
     description: Whether prepared data must include Part*CueData.mat files.
     required: false
     default: "true"
+  expected-main-files:
+    description: Minimum number of Part*Data.mat files required before treating data as complete.
+    required: false
+    default: "1"
+  expected-cue-files:
+    description: Minimum number of Part*CueData.mat files required when require-cue-files=true.
+    required: false
+    default: "1"
 
 outputs:
   data-dir:
@@ -73,12 +81,14 @@ runs:
         mkdir -p "$(dirname "${data_dir}")" "${cache_data_dir}"
         main_count="$(find "${cache_data_dir}" -name 'Part*Data.mat' ! -name 'Part*CueData.mat' | wc -l | tr -d ' ')"
         cue_count="$(find "${cache_data_dir}" -name 'Part*CueData.mat' | wc -l | tr -d ' ')"
-        if [ "${main_count}" -gt 0 ] && { [ "${{ inputs.require-cue-files }}" != "true" ] || [ "${cue_count}" -gt 0 ]; }; then
+        expected_main_files="${{ inputs.expected-main-files }}"
+        expected_cue_files="${{ inputs.expected-cue-files }}"
+        if [ "${main_count}" -ge "${expected_main_files}" ] && { [ "${{ inputs.require-cue-files }}" != "true" ] || [ "${cue_count}" -ge "${expected_cue_files}" ]; }; then
           echo "local-cache-hit=true" >> "$GITHUB_OUTPUT"
           echo "MEG data cache hit at ${cache_data_dir}: ${main_count} main files, ${cue_count} cue files"
         else
           echo "local-cache-hit=false" >> "$GITHUB_OUTPUT"
-          echo "MEG data cache miss at ${cache_data_dir}"
+          echo "MEG data cache miss at ${cache_data_dir}: ${main_count}/${expected_main_files} main files, ${cue_count}/${expected_cue_files} cue files"
         fi
         echo "data-dir=${data_dir}" >> "$GITHUB_OUTPUT"
         echo "cache-data-dir=${cache_data_dir}" >> "$GITHUB_OUTPUT"
@@ -136,8 +146,10 @@ runs:
         fi
         main_count="$(find -L "${DATA_DIR}" -name 'Part*Data.mat' ! -name 'Part*CueData.mat' | wc -l | tr -d ' ')"
         cue_count="$(find -L "${DATA_DIR}" -name 'Part*CueData.mat' | wc -l | tr -d ' ')"
-        if [ "${main_count}" -eq 0 ] || { [ "${{ inputs.require-cue-files }}" = "true" ] && [ "${cue_count}" -eq 0 ]; }; then
-          echo "Prepared MEG data is incomplete at ${DATA_DIR}: ${main_count} main files, ${cue_count} cue files" >&2
+        expected_main_files="${{ inputs.expected-main-files }}"
+        expected_cue_files="${{ inputs.expected-cue-files }}"
+        if [ "${main_count}" -lt "${expected_main_files}" ] || { [ "${{ inputs.require-cue-files }}" = "true" ] && [ "${cue_count}" -lt "${expected_cue_files}" ]; }; then
+          echo "Prepared MEG data is incomplete at ${DATA_DIR}: ${main_count}/${expected_main_files} main files, ${cue_count}/${expected_cue_files} cue files" >&2
           exit 1
         fi
         echo "Prepared MEG data at ${DATA_DIR}: ${main_count} main files, ${cue_count} cue files"
