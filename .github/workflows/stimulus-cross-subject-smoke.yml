@@ -204,7 +204,7 @@ jobs:
           PY
 
       - name: Upload cross-subject smoke outputs
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: stimulus-cross-subject-smoke-outputs
           path: outputs/stimulus_cross_subject_*.csv
