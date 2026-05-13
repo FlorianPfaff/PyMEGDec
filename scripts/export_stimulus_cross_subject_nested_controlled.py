@@ -51,6 +51,12 @@ def _parse_token_list(value: str) -> tuple[str, ...]:
     return values
 
 
+def _parse_alignment_list(value: str) -> tuple[str, ...]:
+    """Parse comma-separated alignment modes with CLI-friendly hyphen aliases."""
+
+    return tuple(token.strip().lower().replace("-", "_") for token in _parse_token_list(value))
+
+
 def _parse_time_window(value: str) -> tuple[float, float]:
     start, stop = _parse_float_list(value)
     if start >= stop:
@@ -103,6 +109,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-window", type=_parse_time_window, required=True)
     parser.add_argument("--feature-modes", type=_parse_token_list, required=True)
     parser.add_argument("--normalizations", type=_parse_token_list, required=True)
+    parser.add_argument("--alignments", type=_parse_alignment_list, required=True)
     parser.add_argument("--classifiers", type=_parse_token_list, required=True)
     parser.add_argument("--classifier-params", type=_parse_classifier_params, required=True)
     parser.add_argument("--components-pca-values", type=_parse_int_or_inf_list, required=True)
@@ -133,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         baseline_window=args.baseline_window,
         feature_modes=args.feature_modes,
         normalizations=args.normalizations,
+        alignments=args.alignments,
         classifiers=args.classifiers,
         classifier_params=args.classifier_params,
         components_pca_values=args.components_pca_values,

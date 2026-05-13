@@ -102,13 +102,17 @@ on:
         required: false
         default: "10"
         type: string
-      label_shuffle_control:
-        description: Shuffle training labels within each participant as a nested null control.
+      label_control:
+        description: Training-label control for nested null benchmarks.
         required: true
-        default: false
-        type: boolean
-      label_shuffle_seed:
-        description: Seed for the nested label-shuffle control.
+        default: none
+        type: choice
+        options:
+          - none
+          - shuffle-within-subject
+          - circular-shift-within-subject
+      label_control_seed:
+        description: Seed for the nested training-label control.
         required: true
         default: "0"
         type: string
@@ -147,8 +151,8 @@ jobs:
       CLASSIFIER_PARAMS: ${{ inputs.classifier_params }}
       COMPONENTS_PCA_VALUES: ${{ inputs.components_pca_values }}
       MAX_TRIALS_PER_CLASS_PER_PARTICIPANT: ${{ inputs.max_trials_per_class_per_participant }}
-      LABEL_SHUFFLE_CONTROL: ${{ inputs.label_shuffle_control }}
-      LABEL_SHUFFLE_SEED: ${{ inputs.label_shuffle_seed }}
+      LABEL_CONTROL: ${{ inputs.label_control }}
+      LABEL_CONTROL_SEED: ${{ inputs.label_control_seed }}
       STIMULUS_METADATA_PATH: ${{ inputs.stimulus_metadata_path }}
       CONFUSION_CATEGORY_COLUMNS: ${{ inputs.confusion_category_columns }}
       MAIN_FILE_NAMES: >-
@@ -203,11 +207,11 @@ jobs:
           set -euo pipefail
           mkdir -p outputs
           output_prefix="outputs/stimulus_cross_subject_nested"
-          if [[ "${LABEL_SHUFFLE_CONTROL}" == "true" ]]; then
-            output_prefix="outputs/stimulus_cross_subject_nested_label_shuffle"
+          if [[ "${LABEL_CONTROL}" != "none" ]]; then
+            output_prefix="outputs/stimulus_cross_subject_nested_${LABEL_CONTROL//-/_}"
           fi
           args=(
-            python scripts/export_stimulus_cross_subject_nested.py
+            python scripts/export_stimulus_cross_subject_nested_controlled.py
             --data-dir "${DATA_DIR}"
             --participants "${PARTICIPANTS}"
             --window-centers "${WINDOW_CENTERS}"
@@ -219,6 +223,8 @@ jobs:
             --classifiers "${CLASSIFIERS}"
             --classifier-params "${CLASSIFIER_PARAMS}"
             --components-pca-values "${COMPONENTS_PCA_VALUES}"
+            --label-control "${LABEL_CONTROL}"
+            --label-control-seed "${LABEL_CONTROL_SEED}"
             --outer-output "${output_prefix}_outer.csv"
             --summary-output "${output_prefix}_group_summary.csv"
             --inner-validation-output "${output_prefix}_inner_validation.csv"
@@ -229,9 +235,6 @@ jobs:
             --confusion-pairs-output "${output_prefix}_confusion_pairs.csv"
             --write-incremental
           )
-          if [[ "${LABEL_SHUFFLE_CONTROL}" == "true" ]]; then
-            args+=(--label-shuffle-control --label-shuffle-seed "${LABEL_SHUFFLE_SEED}")
-          fi
           if [[ -n "${MAX_TRIALS_PER_CLASS_PER_PARTICIPANT}" ]]; then
             args+=(--max-trials-per-class-per-participant "${MAX_TRIALS_PER_CLASS_PER_PARTICIPANT}")
           fi
@@ -270,9 +273,10 @@ jobs:
           import os
           from pathlib import Path
 
+          label_control = os.environ.get("LABEL_CONTROL", "none") or "none"
           output_prefix = "stimulus_cross_subject_nested"
-          if os.environ.get("LABEL_SHUFFLE_CONTROL") == "true":
-              output_prefix = "stimulus_cross_subject_nested_label_shuffle"
+          if label_control != "none":
+              output_prefix = f"stimulus_cross_subject_nested_{label_control.replace('-', '_')}"
           summary_path = Path("outputs") / f"{output_prefix}_group_summary.csv"
           selected_path = Path("outputs") / f"{output_prefix}_selected.csv"
           pairs_path = Path("outputs") / f"{output_prefix}_confusion_pairs.csv"
@@ -316,8 +320,9 @@ jobs:
               "| --- | ---: |",
               f"| outer folds | {summary['n_outer_folds']} |",
               f"| candidates | {summary['n_candidates']} |",
-              f"| label shuffle control | {summary.get('label_shuffle_control', os.environ.get('LABEL_SHUFFLE_CONTROL', 'false'))} |",
-              f"| label shuffle seed | {summary.get('label_shuffle_seed', os.environ.get('LABEL_SHUFFLE_SEED', ''))} |",
+              f"| label control | {summary.get('label_control', label_control)} |",
+              f"| label control seed | {summary.get('label_control_seed', os.environ.get('LABEL_CONTROL_SEED', ''))} |",
+              f"| training labels controlled | {summary.get('training_labels_controlled', str(label_control != 'none').lower())} |",
               f"| trial cap counts | {summary.get('max_trials_per_class_per_participant_counts', '')} |",
               f"| selected classifier counts | {summary.get('selected_classifier_counts', '')} |",
               f"| selected window center counts | {summary.get('selected_window_center_counts', '')} |",
