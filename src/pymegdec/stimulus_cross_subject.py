@@ -6,15 +6,21 @@ import csv
 from collections import Counter
 from dataclasses import dataclass
 from itertools import product
-from math import comb
 from pathlib import Path
 
 import numpy as np
 import scipy.io as sio
+from reptrace.decoding.alignment import class_pattern_procrustes_alignment
+from reptrace.decoding.normalization import baseline_whitening_matrix as reptrace_baseline_whitening_matrix
+from reptrace.decoding.normalization import nonzero_scale
+from reptrace.decoding.normalization import normalize_features as reptrace_normalize_features
 from reptrace.decoding.windowed import fit_window_model as fit_reptrace_window_model
 from reptrace.decoding.windowed import predict_window_model as predict_reptrace_window_model
 from reptrace.decoding.windowed import transform_window_features as transform_reptrace_window_features
-from reptrace.metrics.confusion import confusion_counts, per_class_accuracy
+from reptrace.metrics.classification import ranked_accuracy_metrics, subject_level_signflip_summary
+from reptrace.metrics.confusion import category_confusion_enrichment as reptrace_category_confusion_enrichment
+from reptrace.metrics.confusion import category_confusion_matrix as reptrace_category_confusion_matrix
+from reptrace.metrics.confusion import confusion_counts, confusion_pair_summary, per_class_accuracy
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 
 from pymegdec.alpha_metrics import write_alpha_metrics_csv
@@ -54,9 +60,6 @@ CROSS_SUBJECT_PREDICTION_GROUP_COLUMNS = (
     "label_shuffle_control",
     "label_shuffle_seed",
 )
-STIMULUS_METADATA_ID_COLUMNS = ("stimulus", "stimulus_id", "true_stimulus", "label", "image_id")
-
-
 @dataclass(frozen=True)
 class CrossSubjectStimulusConfig:  # pylint: disable=too-many-instance-attributes
     """Parameters for the fixed-pipeline cross-subject stimulus smoke test."""
@@ -307,14 +310,16 @@ def summarize_cross_subject_stimulus_smoke(outer_rows, *, config=None):
     mean_ranks = _finite_metric_values(outer_rows, "mean_true_label_rank")
     chance = float(outer_rows[0]["chance_accuracy"])
     differences = balanced - chance
-    participants_above_chance = _participants_above_chance(differences)
-    participants_total = _participants_total(differences)
-    exact_sign_p_value = _one_sided_exact_sign_p_value(differences)
-    signflip_p_value = _one_sided_signflip_p_value(
-        differences,
+    sign_summary = subject_level_signflip_summary(
+        balanced,
+        chance=chance,
         n_permutations=config.signflip_permutations,
-        seed=config.signflip_seed,
+        random_state=config.signflip_seed,
     )
+    participants_above_chance = int(sign_summary["n_above_chance"])
+    participants_total = int(sign_summary["n_subjects"])
+    exact_sign_p_value = float(sign_summary["one_sided_exact_sign_p_value"])
+    signflip_p_value = float(sign_summary["one_sided_signflip_p_value"])
     return [
         {
             "n_outer_folds": len(outer_rows),
@@ -380,10 +385,16 @@ def summarize_nested_cross_subject_stimulus(outer_rows, *, signflip_permutations
     mean_ranks = _finite_metric_values(outer_rows, "mean_true_label_rank")
     chance = float(outer_rows[0]["chance_accuracy"])
     differences = balanced - chance
-    participants_above_chance = _participants_above_chance(differences)
-    participants_total = _participants_total(differences)
-    exact_sign_p_value = _one_sided_exact_sign_p_value(differences)
-    signflip_p_value = _one_sided_signflip_p_value(differences, n_permutations=signflip_permutations, seed=signflip_seed)
+    sign_summary = subject_level_signflip_summary(
+        balanced,
+        chance=chance,
+        n_permutations=signflip_permutations,
+        random_state=signflip_seed,
+    )
+    participants_above_chance = int(sign_summary["n_above_chance"])
+    participants_total = int(sign_summary["n_subjects"])
+    exact_sign_p_value = float(sign_summary["one_sided_exact_sign_p_value"])
+    signflip_p_value = float(sign_summary["one_sided_signflip_p_value"])
     selected_counts = Counter(int(row["selected_candidate_index"]) for row in outer_rows)
     classifier_counts = _row_value_counts(outer_rows, "selected_classifier", fallback_key="classifier")
     window_counts = _row_value_counts(outer_rows, "selected_window_center_s", fallback_key="window_center_s", transform=float)
@@ -491,27 +502,17 @@ def summarize_cross_subject_confusion_pairs(prediction_rows, *, stimulus_metadat
     if missing:
         raise ValueError(f"Prediction rows are missing required columns: {sorted(missing)}")
 
-    metadata_by_stimulus = _stimulus_metadata_by_id(stimulus_metadata_rows)
-    rows = []
     group_columns = _present_group_columns(frame)
-    for group_key, group_frame in _iter_frame_groups(frame, group_columns):
-        rows.extend(
-            _summarize_confusion_pairs_for_group(
-                group_frame,
-                _group_row(group_columns, group_key),
-                metadata_by_stimulus,
-            )
-        )
-
-    return sorted(
-        rows,
-        key=lambda row: (
-            -int(row["total_confusions"]),
-            -float(row["mean_directional_rate"]) if np.isfinite(float(row["mean_directional_rate"])) else np.inf,
-            _stimulus_sort_key(row["stimulus_a"]),
-            _stimulus_sort_key(row["stimulus_b"]),
-        ),
+    pairs = confusion_pair_summary(
+        frame,
+        true_column="true_stimulus",
+        predicted_column="predicted_stimulus",
+        participant_column="test_participant" if "test_participant" in frame.columns else None,
+        group_columns=group_columns,
+        metadata=stimulus_metadata_rows,
+        category_columns=None,
     )
+    return _stimulus_pair_records(pairs)
 
 
 def summarize_cross_subject_confusion_category_enrichment(
@@ -526,9 +527,7 @@ def summarize_cross_subject_confusion_category_enrichment(
 
     if not prediction_rows:
         return []
-    metadata_by_stimulus = _stimulus_metadata_by_id(stimulus_metadata_rows)
-    category_columns = _normalize_category_columns(stimulus_metadata_rows, category_columns)
-    if not metadata_by_stimulus or not category_columns:
+    if not _has_metadata_rows(stimulus_metadata_rows):
         return []
 
     import pandas as pd
@@ -539,20 +538,19 @@ def summarize_cross_subject_confusion_category_enrichment(
     if missing:
         raise ValueError(f"Prediction rows are missing required columns: {sorted(missing)}")
 
-    rows = []
     group_columns = _present_group_columns(frame)
-    for group_key, group_frame in _iter_frame_groups(frame, group_columns):
-        rows.extend(
-            _summarize_category_enrichment_for_group(
-                group_frame,
-                _group_row(group_columns, group_key),
-                metadata_by_stimulus,
-                category_columns,
-                n_permutations=n_permutations,
-                seed=seed,
-            )
-        )
-    return rows
+    enrichment = reptrace_category_confusion_enrichment(
+        frame,
+        metadata=stimulus_metadata_rows,
+        category_columns=category_columns,
+        true_column="true_stimulus",
+        predicted_column="predicted_stimulus",
+        participant_column="test_participant" if "test_participant" in frame.columns else None,
+        group_columns=group_columns,
+        n_permutations=n_permutations,
+        random_state=seed,
+    )
+    return enrichment.to_dict(orient="records")
 
 
 def summarize_cross_subject_confusion_category_matrix(
@@ -565,9 +563,7 @@ def summarize_cross_subject_confusion_category_matrix(
 
     if not prediction_rows:
         return []
-    metadata_by_stimulus = _stimulus_metadata_by_id(stimulus_metadata_rows)
-    category_columns = _normalize_category_columns(stimulus_metadata_rows, category_columns)
-    if not metadata_by_stimulus or not category_columns:
+    if not _has_metadata_rows(stimulus_metadata_rows):
         return []
 
     import pandas as pd
@@ -578,27 +574,39 @@ def summarize_cross_subject_confusion_category_matrix(
     if missing:
         raise ValueError(f"Prediction rows are missing required columns: {sorted(missing)}")
 
-    rows = []
     group_columns = _present_group_columns(frame)
-    for group_key, group_frame in _iter_frame_groups(frame, group_columns):
-        rows.extend(
-            _summarize_category_matrix_for_group(
-                group_frame,
-                _group_row(group_columns, group_key),
-                metadata_by_stimulus,
-                category_columns,
-            )
-        )
-    return sorted(
-        rows,
-        key=lambda row: (
-            -float(row["category_confusion_lift"]) if np.isfinite(float(row["category_confusion_lift"])) else np.inf,
-            -int(row["count"]),
-            str(row["category_column"]),
-            str(row["true_category"]),
-            str(row["predicted_category"]),
-        ),
+    matrix = reptrace_category_confusion_matrix(
+        frame,
+        metadata=stimulus_metadata_rows,
+        category_columns=category_columns,
+        true_column="true_stimulus",
+        predicted_column="predicted_stimulus",
+        participant_column="test_participant" if "test_participant" in frame.columns else None,
+        group_columns=group_columns,
     )
+    return matrix.to_dict(orient="records")
+
+
+def _stimulus_pair_records(pair_frame):
+    if pair_frame.empty:
+        return []
+    renamed = pair_frame.rename(columns={"label_a": "stimulus_a", "label_b": "stimulus_b"}).copy()
+    metadata_columns = {
+        column: column.replace("label_a_", "stimulus_a_").replace("label_b_", "stimulus_b_")
+        for column in renamed.columns
+        if column.startswith("label_a_") or column.startswith("label_b_")
+    }
+    if metadata_columns:
+        renamed = renamed.rename(columns=metadata_columns)
+    return renamed.to_dict(orient="records")
+
+
+def _has_metadata_rows(stimulus_metadata_rows):
+    if stimulus_metadata_rows is None:
+        return False
+    if hasattr(stimulus_metadata_rows, "empty"):
+        return not bool(stimulus_metadata_rows.empty)
+    return bool(stimulus_metadata_rows)
 
 
 def _assemble_nested_artifacts(outer_rows, inner_rows, selected_rows, prediction_rows, candidate_configs):
@@ -708,385 +716,6 @@ def _rows_with_consistent_fields(rows):
 
 def _present_group_columns(frame):
     return tuple(column for column in CROSS_SUBJECT_PREDICTION_GROUP_COLUMNS if column in frame.columns)
-
-
-def _iter_frame_groups(frame, group_columns):
-    if not group_columns:
-        yield (), frame
-        return
-    for group_key, group_frame in frame.groupby(list(group_columns), dropna=False, sort=True):
-        if len(group_columns) == 1:
-            group_key = (group_key,)
-        yield tuple(group_key), group_frame
-
-
-def _group_row(group_columns, group_key):
-    return dict(zip(group_columns, group_key))
-
-
-def _summarize_category_enrichment_for_group(
-    group_frame,
-    group_values,
-    metadata_by_stimulus,
-    category_columns,
-    *,
-    n_permutations,
-    seed,
-):
-    error_frame = group_frame[group_frame["true_stimulus"] != group_frame["predicted_stimulus"]]
-    if error_frame.empty:
-        return []
-
-    rows = []
-    for category_column in category_columns:
-        category_errors = _category_error_rows(error_frame, metadata_by_stimulus, category_column)
-        if not category_errors:
-            continue
-        true_categories = [row["true_category"] for row in category_errors]
-        predicted_categories = [row["predicted_category"] for row in category_errors]
-        same_category = [true_category == predicted_category for true_category, predicted_category in zip(true_categories, predicted_categories)]
-        observed = int(sum(same_category))
-        total = int(len(category_errors))
-        expected = _expected_same_category_count(true_categories, predicted_categories)
-        same_participants = {
-            row["test_participant"]
-            for row, is_same in zip(category_errors, same_category)
-            if is_same and row.get("test_participant") not in (None, "")
-        }
-        error_participants = {row["test_participant"] for row in category_errors if row.get("test_participant") not in (None, "")}
-        rows.append(
-            {
-                **group_values,
-                "category_column": category_column,
-                "category_values": ";".join(sorted(set(true_categories) | set(predicted_categories))),
-                "n_errors_with_category": total,
-                "same_category_errors": observed,
-                "expected_same_category_errors": expected,
-                "same_category_error_rate": _safe_rate(observed, total),
-                "expected_same_category_error_rate": _safe_rate(expected, total),
-                "same_category_lift": _safe_rate(observed, expected),
-                "same_category_excess": _difference_or_nan(observed, expected),
-                "same_category_standardized_residual": _standardized_residual(observed, expected),
-                "n_participants_with_category_errors": len(error_participants),
-                "n_participants_with_same_category_errors": len(same_participants),
-                "same_category_permutation_p_value": _same_category_permutation_p_value(
-                    true_categories,
-                    predicted_categories,
-                    observed=observed,
-                    n_permutations=n_permutations,
-                    seed=_category_seed(seed, group_values, category_column),
-                ),
-            }
-        )
-    return rows
-
-
-def _summarize_category_matrix_for_group(group_frame, group_values, metadata_by_stimulus, category_columns):
-    error_frame = group_frame[group_frame["true_stimulus"] != group_frame["predicted_stimulus"]]
-    if error_frame.empty:
-        return []
-
-    rows = []
-    for category_column in category_columns:
-        category_errors = _category_error_rows(error_frame, metadata_by_stimulus, category_column)
-        if not category_errors:
-            continue
-        total = int(len(category_errors))
-        true_counts = Counter(row["true_category"] for row in category_errors)
-        predicted_counts = Counter(row["predicted_category"] for row in category_errors)
-        category_pair_counts = Counter((row["true_category"], row["predicted_category"]) for row in category_errors)
-        category_pair_participants: dict[tuple[str, str], set] = {}
-        for row in category_errors:
-            participant = row.get("test_participant")
-            if participant in (None, ""):
-                continue
-            category_pair_participants.setdefault((row["true_category"], row["predicted_category"]), set()).add(participant)
-
-        for (true_category, predicted_category), count in category_pair_counts.items():
-            expected = _expected_confusion_count(true_counts[true_category], predicted_counts[predicted_category], total)
-            rows.append(
-                {
-                    **group_values,
-                    "category_column": category_column,
-                    "true_category": true_category,
-                    "predicted_category": predicted_category,
-                    "same_category": bool(true_category == predicted_category),
-                    "count": int(count),
-                    "expected_count": expected,
-                    "rate": _safe_rate(count, total),
-                    "expected_rate": _safe_rate(expected, total),
-                    "category_confusion_lift": _safe_rate(count, expected),
-                    "category_confusion_excess": _difference_or_nan(count, expected),
-                    "category_standardized_residual": _standardized_residual(count, expected),
-                    "true_category_error_count": int(true_counts[true_category]),
-                    "predicted_category_error_count": int(predicted_counts[predicted_category]),
-                    "n_errors_with_category": total,
-                    "n_participants": len(category_pair_participants.get((true_category, predicted_category), set())),
-                }
-            )
-    return rows
-
-
-def _category_error_rows(error_frame, metadata_by_stimulus, category_column):
-    rows = []
-    for _, row in error_frame.iterrows():
-        true_category = _metadata_category_value(metadata_by_stimulus, row["true_stimulus"], category_column)
-        predicted_category = _metadata_category_value(metadata_by_stimulus, row["predicted_stimulus"], category_column)
-        if true_category == "" or predicted_category == "":
-            continue
-        rows.append(
-            {
-                "true_category": true_category,
-                "predicted_category": predicted_category,
-                "test_participant": row.get("test_participant", ""),
-            }
-        )
-    return rows
-
-
-def _expected_same_category_count(true_categories, predicted_categories):
-    total = len(true_categories)
-    if total == 0:
-        return np.nan
-    true_counts = Counter(true_categories)
-    predicted_counts = Counter(predicted_categories)
-    return float(sum(true_counts[category] * predicted_counts[category] for category in set(true_counts) | set(predicted_counts)) / total)
-
-
-def _same_category_permutation_p_value(true_categories, predicted_categories, *, observed, n_permutations, seed):
-    if n_permutations is None or int(n_permutations) <= 0:
-        return np.nan
-    true_categories = np.asarray(true_categories, dtype=object)
-    predicted_categories = np.asarray(predicted_categories, dtype=object)
-    if true_categories.size == 0 or predicted_categories.size == 0:
-        return np.nan
-    rng = np.random.default_rng(seed)
-    exceedances = 0
-    for _ in range(int(n_permutations)):
-        shuffled = rng.permutation(predicted_categories)
-        exceedances += int(np.sum(true_categories == shuffled) >= observed)
-    return float((exceedances + 1) / (int(n_permutations) + 1))
-
-
-def _category_seed(seed, group_values, category_column):
-    seed_values = [0 if seed is None else int(seed), sum(ord(character) for character in str(category_column))]
-    for key, value in sorted(group_values.items()):
-        seed_values.append(sum(ord(character) for character in f"{key}={value}"))
-    return np.random.SeedSequence(seed_values)
-
-
-def _summarize_confusion_pairs_for_group(group_frame, group_values, metadata_by_stimulus):
-    true_counts = group_frame["true_stimulus"].value_counts(dropna=False).to_dict()
-    error_frame = group_frame[group_frame["true_stimulus"] != group_frame["predicted_stimulus"]]
-    if error_frame.empty:
-        return []
-
-    pair_counts, pair_participants, directional_participants = _confusion_pair_maps(error_frame)
-    error_marginals = _confusion_error_marginals(error_frame)
-    return [
-        _confusion_pair_summary_row(
-            group_values,
-            stimulus_a,
-            stimulus_b,
-            counts,
-            true_counts,
-            error_marginals,
-            pair_participants,
-            directional_participants,
-            metadata_by_stimulus,
-        )
-        for (stimulus_a, stimulus_b), counts in pair_counts.items()
-    ]
-
-
-def _confusion_pair_maps(error_frame):
-    pair_counts: dict[tuple, Counter] = {}
-    pair_participants: dict[tuple, set] = {}
-    directional_participants: dict[tuple, set] = {}
-    for _, row in error_frame.iterrows():
-        true_stimulus = row["true_stimulus"]
-        predicted_stimulus = row["predicted_stimulus"]
-        stimulus_a, stimulus_b = _ordered_stimulus_pair(true_stimulus, predicted_stimulus)
-        pair_counts.setdefault((stimulus_a, stimulus_b), Counter())
-        pair_participants.setdefault((stimulus_a, stimulus_b), set())
-        directional_participants.setdefault((stimulus_a, stimulus_b, true_stimulus, predicted_stimulus), set())
-        pair_counts[(stimulus_a, stimulus_b)][(true_stimulus, predicted_stimulus)] += 1
-        if "test_participant" in row:
-            participant = row["test_participant"]
-            pair_participants[(stimulus_a, stimulus_b)].add(participant)
-            directional_participants[(stimulus_a, stimulus_b, true_stimulus, predicted_stimulus)].add(participant)
-    return pair_counts, pair_participants, directional_participants
-
-
-def _confusion_error_marginals(error_frame):
-    return {
-        "true_counts": error_frame["true_stimulus"].value_counts(dropna=False).to_dict(),
-        "predicted_counts": error_frame["predicted_stimulus"].value_counts(dropna=False).to_dict(),
-        "total": int(len(error_frame)),
-    }
-
-
-def _confusion_pair_summary_row(
-    group_values,
-    stimulus_a,
-    stimulus_b,
-    counts,
-    true_counts,
-    error_marginals,
-    pair_participants,
-    directional_participants,
-    metadata_by_stimulus,
-):
-    a_to_b_count = int(counts[(stimulus_a, stimulus_b)])
-    b_to_a_count = int(counts[(stimulus_b, stimulus_a)])
-    true_a_trials = int(true_counts.get(stimulus_a, 0))
-    true_b_trials = int(true_counts.get(stimulus_b, 0))
-    a_to_b_rate = _safe_rate(a_to_b_count, true_a_trials)
-    b_to_a_rate = _safe_rate(b_to_a_count, true_b_trials)
-    total_confusions = a_to_b_count + b_to_a_count
-    bias_metrics = _confusion_pair_bias_metrics(stimulus_a, stimulus_b, a_to_b_count, b_to_a_count, error_marginals)
-    result = {
-        **group_values,
-        "stimulus_a": stimulus_a,
-        "stimulus_b": stimulus_b,
-        "a_to_b_count": a_to_b_count,
-        "b_to_a_count": b_to_a_count,
-        "total_confusions": total_confusions,
-        "true_a_trials": true_a_trials,
-        "true_b_trials": true_b_trials,
-        "a_to_b_rate": a_to_b_rate,
-        "b_to_a_rate": b_to_a_rate,
-        "mean_directional_rate": _nanmean_or_nan((a_to_b_rate, b_to_a_rate)),
-        "max_directional_rate": _nanmax_or_nan((a_to_b_rate, b_to_a_rate)),
-        "min_directional_rate": _nanmin_or_nan((a_to_b_rate, b_to_a_rate)),
-        "absolute_rate_asymmetry": _absolute_difference_or_nan(a_to_b_rate, b_to_a_rate),
-        "total_pair_error_rate": _safe_rate(total_confusions, true_a_trials + true_b_trials),
-        **bias_metrics,
-        "symmetric_confusion_count": min(a_to_b_count, b_to_a_count),
-        "n_confused_participants": len(pair_participants.get((stimulus_a, stimulus_b), set())),
-        "a_to_b_participants": len(directional_participants.get((stimulus_a, stimulus_b, stimulus_a, stimulus_b), set())),
-        "b_to_a_participants": len(directional_participants.get((stimulus_a, stimulus_b, stimulus_b, stimulus_a), set())),
-    }
-    _add_stimulus_metadata(result, stimulus_a, stimulus_b, metadata_by_stimulus)
-    return result
-
-
-def _confusion_pair_bias_metrics(stimulus_a, stimulus_b, a_to_b_count, b_to_a_count, error_marginals):
-    true_error_counts = error_marginals["true_counts"]
-    predicted_error_counts = error_marginals["predicted_counts"]
-    total_errors = error_marginals["total"]
-    true_a_error_count = int(true_error_counts.get(stimulus_a, 0))
-    true_b_error_count = int(true_error_counts.get(stimulus_b, 0))
-    predicted_a_error_count = int(predicted_error_counts.get(stimulus_a, 0))
-    predicted_b_error_count = int(predicted_error_counts.get(stimulus_b, 0))
-    expected_a_to_b_count = _expected_confusion_count(true_a_error_count, predicted_b_error_count, total_errors)
-    expected_b_to_a_count = _expected_confusion_count(true_b_error_count, predicted_a_error_count, total_errors)
-    expected_total_confusions = expected_a_to_b_count + expected_b_to_a_count
-    total_confusions = a_to_b_count + b_to_a_count
-    return {
-        "true_a_error_count": true_a_error_count,
-        "true_b_error_count": true_b_error_count,
-        "predicted_a_error_count": predicted_a_error_count,
-        "predicted_b_error_count": predicted_b_error_count,
-        "expected_a_to_b_count": expected_a_to_b_count,
-        "expected_b_to_a_count": expected_b_to_a_count,
-        "expected_total_confusions": expected_total_confusions,
-        "a_to_b_lift": _safe_rate(a_to_b_count, expected_a_to_b_count),
-        "b_to_a_lift": _safe_rate(b_to_a_count, expected_b_to_a_count),
-        "pair_confusion_lift": _safe_rate(total_confusions, expected_total_confusions),
-        "total_confusion_excess": _difference_or_nan(total_confusions, expected_total_confusions),
-        "pair_standardized_residual": _standardized_residual(total_confusions, expected_total_confusions),
-    }
-
-
-def _ordered_stimulus_pair(first, second):
-    return tuple(sorted((first, second), key=_stimulus_sort_key))
-
-
-def _stimulus_sort_key(value):
-    try:
-        return 0, int(value)
-    except (TypeError, ValueError):
-        return 1, str(value)
-
-
-def _stimulus_metadata_by_id(stimulus_metadata_rows):
-    metadata_by_stimulus: dict = {}
-    if not stimulus_metadata_rows:
-        return metadata_by_stimulus
-    for metadata_row in stimulus_metadata_rows:
-        stimulus = _metadata_stimulus_id(metadata_row)
-        if stimulus is not None:
-            metadata_by_stimulus[stimulus] = dict(metadata_row)
-    return metadata_by_stimulus
-
-
-def _normalize_category_columns(stimulus_metadata_rows, category_columns):
-    if category_columns is None:
-        return _infer_category_columns(stimulus_metadata_rows)
-    if isinstance(category_columns, str):
-        category_columns = [column.strip() for column in category_columns.split(",") if column.strip()]
-    return tuple(str(column).strip() for column in category_columns if str(column).strip())
-
-
-def _infer_category_columns(stimulus_metadata_rows):
-    if not stimulus_metadata_rows:
-        return tuple()
-    excluded = {column.lower() for column in STIMULUS_METADATA_ID_COLUMNS}
-    excluded.update({"name", "stimulus_name", "image", "image_name", "filename", "file", "path"})
-    columns = sorted({column for row in stimulus_metadata_rows for column in row if column.lower() not in excluded})
-    inferred = []
-    for column in columns:
-        values = [str(row.get(column, "")).strip() for row in stimulus_metadata_rows]
-        values = [value for value in values if value]
-        if len(set(values)) < len(values):
-            inferred.append(column)
-    return tuple(inferred)
-
-
-def _metadata_stimulus_id(metadata_row):
-    for column in STIMULUS_METADATA_ID_COLUMNS:
-        value = metadata_row.get(column)
-        if value not in (None, ""):
-            return value
-    return None
-
-
-def _metadata_category_value(metadata_by_stimulus, stimulus, category_column):
-    metadata = _lookup_stimulus_metadata(metadata_by_stimulus, stimulus)
-    value = metadata.get(category_column, "")
-    if value in (None, ""):
-        return ""
-    return str(value).strip()
-
-
-def _add_stimulus_metadata(row, stimulus_a, stimulus_b, metadata_by_stimulus):
-    metadata_a = _lookup_stimulus_metadata(metadata_by_stimulus, stimulus_a)
-    metadata_b = _lookup_stimulus_metadata(metadata_by_stimulus, stimulus_b)
-    if not metadata_a and not metadata_b:
-        return
-
-    metadata_keys = sorted((set(metadata_a) | set(metadata_b)) - set(STIMULUS_METADATA_ID_COLUMNS))
-    for key in metadata_keys:
-        value_a = metadata_a.get(key, "")
-        value_b = metadata_b.get(key, "")
-        row[f"stimulus_a_{key}"] = value_a
-        row[f"stimulus_b_{key}"] = value_b
-        if value_a != "" and value_b != "":
-            row[f"same_{key}"] = bool(value_a == value_b)
-
-
-def _lookup_stimulus_metadata(metadata_by_stimulus, stimulus):
-    if stimulus in metadata_by_stimulus:
-        return metadata_by_stimulus[stimulus]
-    stimulus_text = str(stimulus)
-    if stimulus_text in metadata_by_stimulus:
-        return metadata_by_stimulus[stimulus_text]
-    try:
-        stimulus_int = int(stimulus)
-    except (TypeError, ValueError):
-        return {}
-    return metadata_by_stimulus.get(stimulus_int, {})
 
 
 def export_cross_subject_stimulus_smoke(  # pylint: disable=too-many-arguments
@@ -1351,18 +980,15 @@ def _align_training_features_by_subject(feature_sets, features_by_subject, label
     if len(common_classes) < 2:
         return features_by_subject, _alignment_metadata(config.alignment, common_classes=common_classes, aligned_participants=())
 
-    class_patterns = [
-        _participant_class_channel_patterns(features, labels, feature_set, common_classes)
-        for feature_set, features, labels in zip(feature_sets, features_by_subject, labels_by_subject)
-    ]
-    transforms = _fit_channel_procrustes_transforms(class_patterns)
-    aligned_features = [
-        _apply_channel_procrustes_transform(features, feature_set, transform)
-        for feature_set, features, transform in zip(feature_sets, features_by_subject, transforms)
-    ]
-    return aligned_features, _alignment_metadata(
-        config.alignment,
+    alignment = class_pattern_procrustes_alignment(
+        features_by_subject,
+        labels_by_subject,
+        n_channels=int(feature_sets[0].n_channels),
         common_classes=common_classes,
+    )
+    return list(alignment.aligned_features), _alignment_metadata(
+        config.alignment,
+        common_classes=alignment.common_classes,
         aligned_participants=(feature_set.participant for feature_set in feature_sets),
     )
 
@@ -1380,66 +1006,6 @@ def _common_label_values(labels_by_subject):
     if not label_sets:
         return tuple()
     return tuple(sorted(set.intersection(*label_sets)))
-
-
-def _participant_class_channel_patterns(features, labels, feature_set, common_classes):
-    channel_features = _features_as_trial_channel_matrix(features, feature_set)
-    labels = np.asarray(labels, dtype=int)
-    patterns = []
-    for label in common_classes:
-        class_features = channel_features[labels == int(label)]
-        if class_features.size == 0:
-            raise ValueError(f"Missing class {label} while fitting Procrustes alignment.")
-        patterns.append(np.mean(class_features, axis=(0, 1)))
-    return np.vstack(patterns)
-
-
-def _features_as_trial_channel_matrix(features, feature_set):
-    features = np.asarray(features, dtype=float)
-    if features.shape[1] == int(feature_set.n_channels):
-        return features[:, None, :]
-    expected_width = int(feature_set.n_window_samples) * int(feature_set.n_channels)
-    if features.shape[1] != expected_width:
-        raise ValueError("Feature width is incompatible with n_window_samples and n_channels.")
-    return features.reshape(features.shape[0], int(feature_set.n_window_samples), int(feature_set.n_channels))
-
-
-def _fit_channel_procrustes_transforms(class_patterns):
-    template = np.mean(np.stack(class_patterns, axis=0), axis=0)
-    for _ in range(3):
-        transforms = [_channel_procrustes_transform(patterns, template) for patterns in class_patterns]
-        aligned_patterns = [_apply_channel_pattern_transform(patterns, transform) for patterns, transform in zip(class_patterns, transforms)]
-        template = np.mean(np.stack(aligned_patterns, axis=0), axis=0)
-    return [_channel_procrustes_transform(patterns, template) for patterns in class_patterns]
-
-
-def _channel_procrustes_transform(source, target):
-    source = np.asarray(source, dtype=float)
-    target = np.asarray(target, dtype=float)
-    source_center = np.mean(source, axis=0)
-    target_center = np.mean(target, axis=0)
-    source_centered = source - source_center
-    target_centered = target - target_center
-    cross_covariance = source_centered.T @ target_centered
-    left, _singular_values, right_t = np.linalg.svd(cross_covariance, full_matrices=False)
-    rotation = left @ right_t
-    return {
-        "source_center": source_center,
-        "target_center": target_center,
-        "rotation": rotation,
-    }
-
-
-def _apply_channel_pattern_transform(patterns, transform):
-    return (np.asarray(patterns, dtype=float) - transform["source_center"]) @ transform["rotation"] + transform["target_center"]
-
-
-def _apply_channel_procrustes_transform(features, feature_set, transform):
-    channel_features = _features_as_trial_channel_matrix(features, feature_set)
-    aligned = (channel_features - transform["source_center"]) @ transform["rotation"] + transform["target_center"]
-    if feature_set.n_window_samples == 1:
-        return aligned[:, 0, :]
-    return aligned.reshape(features.shape[0], -1)
 
 
 def _feature_cache_key(config):
@@ -1621,7 +1187,7 @@ def _score_outer_fold_model(fitted_model, test_set, config, *, include_predictio
     test_labels = test_labels_one_based - 1
     predictions, _scores = predict_reptrace_window_model(model_bundle, test_features)
     class_scores, score_classes = _model_class_scores(model_bundle, test_features)
-    rank_metrics = _ranked_label_metrics(test_labels, class_scores, score_classes)
+    rank_metrics = ranked_accuracy_metrics(test_labels, class_scores, score_classes, top_ks=(2, 3))
     accuracy = float(accuracy_score(test_labels, predictions))
     balanced_accuracy = float(balanced_accuracy_score(test_labels, predictions))
     chance_accuracy = 1.0 / config.chance_classes
@@ -1754,44 +1320,6 @@ def _model_class_scores(model_bundle, features):
     return scores, classes
 
 
-def _ranked_label_metrics(true_labels, class_scores, score_classes):
-    true_label_ranks = _true_label_ranks(true_labels, class_scores, score_classes)
-    finite_ranks = true_label_ranks[np.isfinite(true_label_ranks)]
-    if finite_ranks.size == 0:
-        return {
-            "true_label_ranks": true_label_ranks,
-            "top2_accuracy": np.nan,
-            "top3_accuracy": np.nan,
-            "mean_true_label_rank": np.nan,
-            "median_true_label_rank": np.nan,
-        }
-    return {
-        "true_label_ranks": true_label_ranks,
-        "top2_accuracy": float(np.mean(finite_ranks <= 2)),
-        "top3_accuracy": float(np.mean(finite_ranks <= 3)),
-        "mean_true_label_rank": float(np.mean(finite_ranks)),
-        "median_true_label_rank": float(np.median(finite_ranks)),
-    }
-
-
-def _true_label_ranks(true_labels, class_scores, score_classes):
-    true_labels = np.asarray(true_labels)
-    if class_scores.ndim != 2 or class_scores.shape[1] == 0:
-        return np.full(true_labels.shape[0], np.nan, dtype=float)
-
-    label_to_column = {label: column for column, label in enumerate(np.asarray(score_classes).tolist())}
-    ranks = []
-    for true_label, trial_scores in zip(true_labels, class_scores):
-        true_column = label_to_column.get(int(true_label))
-        if true_column is None:
-            ranks.append(np.nan)
-            continue
-        descending_columns = np.argsort(-trial_scores, kind="mergesort")
-        rank_locations = np.flatnonzero(descending_columns == true_column)
-        ranks.append(float(rank_locations[0] + 1) if rank_locations.size else np.nan)
-    return np.asarray(ranks, dtype=float)
-
-
 def _extract_window_features(data, time_window, *, feature_mode, trial_indices=None):
     feature_mode = _normalize_feature_mode(feature_mode)
     time_vector = _time_vector(data, 0)
@@ -1815,13 +1343,13 @@ def _baseline_feature_statistics(data, config, n_window_samples, trial_indices):
         baseline_features, n_baseline_samples = _extract_window_features(data, config.baseline_window, feature_mode="sensor_mean", trial_indices=trial_indices)
         mean = np.mean(baseline_features, axis=0, keepdims=True)
         std = np.std(baseline_features, axis=0, keepdims=True)
-        return mean, _nonzero_std(std), n_baseline_samples
+        return mean, nonzero_scale(std), n_baseline_samples
 
     if config.feature_mode == "sensor_flat":
         channel_mean, channel_std, n_baseline_samples = _baseline_channel_statistics(data, config.baseline_window, trial_indices)
         mean = np.tile(channel_mean, int(n_window_samples))[None, :]
         std = np.tile(channel_std, int(n_window_samples))[None, :]
-        return mean, _nonzero_std(std), n_baseline_samples
+        return mean, nonzero_scale(std), n_baseline_samples
 
     raise ValueError(f"Unsupported feature_mode: {config.feature_mode}")
 
@@ -1845,35 +1373,12 @@ def _baseline_channel_statistics(data, baseline_window, trial_indices):
 
 def _baseline_channel_whitening_matrix(data, baseline_window, trial_indices):
     baseline_features, n_baseline_samples = _extract_window_features(data, baseline_window, feature_mode="sensor_mean", trial_indices=trial_indices)
-    covariance = _covariance_matrix(baseline_features)
-    covariance = _shrink_covariance(covariance, shrinkage=BASELINE_WHITENING_SHRINKAGE)
-    return _whitening_matrix(covariance), n_baseline_samples
-
-
-def _covariance_matrix(features):
-    features = np.asarray(features, dtype=float)
-    n_features = int(features.shape[1])
-    if features.shape[0] < 2:
-        return np.eye(n_features, dtype=float)
-    covariance = np.cov(features, rowvar=False)
-    covariance = np.asarray(covariance, dtype=float)
-    if covariance.ndim == 0:
-        covariance = covariance.reshape(1, 1)
-    return 0.5 * (covariance + covariance.T)
-
-
-def _shrink_covariance(covariance, *, shrinkage):
-    covariance = np.asarray(covariance, dtype=float)
-    diagonal = np.diag(np.diag(covariance))
-    return (1.0 - float(shrinkage)) * covariance + float(shrinkage) * diagonal
-
-
-def _whitening_matrix(covariance):
-    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-    eigen_floor = max(float(np.max(eigenvalues)) * BASELINE_WHITENING_EIGENVALUE_FLOOR, 1e-12)
-    inverse_sqrt = 1.0 / np.sqrt(np.maximum(eigenvalues, eigen_floor))
-    whitening = (eigenvectors * inverse_sqrt) @ eigenvectors.T
-    return 0.5 * (whitening + whitening.T)
+    whitening = reptrace_baseline_whitening_matrix(
+        baseline_features,
+        shrinkage=BASELINE_WHITENING_SHRINKAGE,
+        eigenvalue_floor=BASELINE_WHITENING_EIGENVALUE_FLOOR,
+    )
+    return whitening, n_baseline_samples
 
 
 def _selected_trial_indices(labels, max_trials_per_class):
@@ -1961,80 +1466,31 @@ def _normalized_subject_features(feature_set, config):
         return feature_set.features
     if config.normalization == "none":
         return feature_set.features
-    if config.normalization == "subject_z":
-        reference = feature_set.features
-        mean = np.mean(reference, axis=0, keepdims=True)
-        std = np.std(reference, axis=0, keepdims=True)
-        return (feature_set.features - mean) / _nonzero_std(std)
-    if config.normalization == "subject_trial_z":
-        return _trial_zscore_features(feature_set.features)
-    if config.normalization == "subject_baseline_z":
-        if feature_set.baseline_feature_mean is None or feature_set.baseline_feature_std is None:
-            raise ValueError("subject_baseline_z requires baseline feature statistics.")
-        mean = feature_set.baseline_feature_mean
-        std = feature_set.baseline_feature_std
-        return (feature_set.features - mean) / std
-    if config.normalization == "subject_baseline_whiten":
-        if feature_set.baseline_feature_mean is None or feature_set.baseline_whitening_matrix is None:
-            raise ValueError("subject_baseline_whiten requires baseline feature statistics and a whitening matrix.")
-        return _baseline_whiten_features(feature_set.features, config, feature_set.baseline_feature_mean, feature_set.baseline_whitening_matrix)
-    raise ValueError(f"Unsupported normalization: {config.normalization}")
+    return _normalize_features(
+        feature_set.features,
+        config,
+        feature_set.baseline_feature_mean,
+        feature_set.baseline_feature_std,
+        feature_set.baseline_whitening_matrix,
+    )
 
 
 def _normalize_features(features, config, baseline_feature_mean, baseline_feature_std, baseline_whitening_matrix):
-    features = np.asarray(features, dtype=float)
-    if config.normalization == "none":
-        return features
-    if config.normalization == "subject_z":
-        mean = np.mean(features, axis=0, keepdims=True)
-        std = _nonzero_std(np.std(features, axis=0, keepdims=True))
-        features -= mean
-        features /= std
-        return features
-    if config.normalization == "subject_trial_z":
-        return _trial_zscore_features(features)
-    if config.normalization == "subject_baseline_z":
-        if baseline_feature_mean is None or baseline_feature_std is None:
-            raise ValueError("subject_baseline_z requires baseline feature statistics.")
-        features -= baseline_feature_mean
-        features /= baseline_feature_std
-        return features
-    if config.normalization == "subject_baseline_whiten":
-        if baseline_feature_mean is None or baseline_whitening_matrix is None:
-            raise ValueError("subject_baseline_whiten requires baseline feature statistics and a whitening matrix.")
-        return _baseline_whiten_features(features, config, baseline_feature_mean, baseline_whitening_matrix)
-    raise ValueError(f"Unsupported normalization: {config.normalization}")
+    n_channels = _whitening_n_channels(config, baseline_whitening_matrix)
+    return reptrace_normalize_features(
+        features,
+        mode=config.normalization,
+        baseline_mean=baseline_feature_mean,
+        baseline_std=baseline_feature_std,
+        whitening=baseline_whitening_matrix,
+        n_channels=n_channels,
+    )
 
 
-def _trial_zscore_features(features):
-    features = np.asarray(features, dtype=float)
-    mean = np.mean(features, axis=1, keepdims=True)
-    std = _nonzero_std(np.std(features, axis=1, keepdims=True))
-    return (features - mean) / std
-
-
-def _baseline_whiten_features(features, config, baseline_feature_mean, baseline_whitening_matrix):
-    centered = np.asarray(features, dtype=float) - baseline_feature_mean
-    whitening_matrix = np.asarray(baseline_whitening_matrix, dtype=float)
-    if config.feature_mode == "sensor_mean":
-        return centered @ whitening_matrix.T
-    if config.feature_mode == "sensor_flat":
-        return _baseline_whiten_sensor_flat_features(centered, whitening_matrix)
-    raise ValueError(f"Unsupported feature_mode: {config.feature_mode}")
-
-
-def _baseline_whiten_sensor_flat_features(features, whitening_matrix):
-    n_channels = int(whitening_matrix.shape[0])
-    if features.shape[1] % n_channels:
-        raise ValueError("sensor_flat feature width must be a multiple of the number of whitening channels.")
-    n_window_samples = int(features.shape[1] // n_channels)
-    matrices = features.reshape(features.shape[0], n_window_samples, n_channels)
-    whitened = matrices @ whitening_matrix.T
-    return whitened.reshape(features.shape[0], -1)
-
-
-def _nonzero_std(std):
-    return np.where(std < 1e-12, 1.0, std)
+def _whitening_n_channels(config, baseline_whitening_matrix):
+    if config.feature_mode != "sensor_flat" or baseline_whitening_matrix is None:
+        return None
+    return int(np.asarray(baseline_whitening_matrix).shape[0])
 
 
 def _centered_window(center, size):
@@ -2095,38 +1551,6 @@ def _nanmin_or_nan(values):
     return float(np.min(values))
 
 
-def _safe_rate(numerator, denominator):
-    denominator = float(denominator)
-    if denominator <= 0:
-        return np.nan
-    return float(numerator) / denominator
-
-
-def _expected_confusion_count(true_error_count, predicted_error_count, total_errors):
-    total_errors = float(total_errors)
-    if total_errors <= 0:
-        return np.nan
-    return float(true_error_count) * float(predicted_error_count) / total_errors
-
-
-def _difference_or_nan(first, second):
-    if not np.isfinite(first) or not np.isfinite(second):
-        return np.nan
-    return float(first - second)
-
-
-def _standardized_residual(observed, expected):
-    if not np.isfinite(expected) or expected <= 0:
-        return np.nan
-    return float(observed - expected) / float(np.sqrt(expected))
-
-
-def _absolute_difference_or_nan(first, second):
-    if not np.isfinite(first) or not np.isfinite(second):
-        return np.nan
-    return float(abs(first - second))
-
-
 def _sem_or_nan(values):
     values = np.asarray(values, dtype=float)
     values = values[np.isfinite(values)]
@@ -2177,46 +1601,6 @@ def _single_row_value(rows, key, *, default=""):
     if len(values) == 1:
         return values[0]
     return ";".join(str(value) for value in values)
-
-
-def _participants_total(differences):
-    differences = np.asarray(differences, dtype=float)
-    return int(np.sum(np.isfinite(differences)))
-
-
-def _participants_above_chance(differences):
-    differences = np.asarray(differences, dtype=float)
-    finite = differences[np.isfinite(differences)]
-    return int(np.sum(finite > 0.0))
-
-
-def _one_sided_exact_sign_p_value(differences):
-    differences = np.asarray(differences, dtype=float)
-    finite = differences[np.isfinite(differences)]
-    if finite.size == 0:
-        return np.nan
-    participants_above = int(np.sum(finite > 0.0))
-    participants_total = int(finite.size)
-    tail_count = sum(comb(participants_total, k) for k in range(participants_above, participants_total + 1))
-    return float(tail_count / (2**participants_total))
-
-
-def _one_sided_signflip_p_value(differences, *, n_permutations, seed):
-    differences = np.asarray(differences, dtype=float)
-    differences = differences[np.isfinite(differences)]
-    if differences.size == 0:
-        return np.nan
-    observed = float(np.mean(differences))
-    if observed <= 0:
-        return 1.0
-    if differences.size <= 16:
-        signs = np.array(np.meshgrid(*[[-1.0, 1.0]] * differences.size)).T.reshape(-1, differences.size)
-        null_means = signs @ differences / differences.size
-        return float(np.mean(null_means >= observed))
-    rng = np.random.default_rng(seed)
-    signs = rng.choice(np.array([-1.0, 1.0]), size=(int(n_permutations), differences.size))
-    null_means = signs @ differences / differences.size
-    return float((np.sum(null_means >= observed) + 1) / (int(n_permutations) + 1))
 
 
 def _normalized_config(config):

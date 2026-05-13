@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import replace
-from math import comb
 from typing import Iterable
 
 import numpy as np
+from reptrace.metrics.classification import exact_one_sided_sign_p_value as reptrace_exact_one_sided_sign_p_value
 
 from pymegdec import stimulus_cross_subject as base
 
@@ -50,7 +50,8 @@ def exact_one_sided_sign_p_value(n_above: int, n_total: int) -> float:
     if n_total <= 0:
         return float("nan")
     n_above = max(0, min(n_above, n_total))
-    return float(sum(comb(n_total, k) for k in range(n_above, n_total + 1)) / (2**n_total))
+    effects = np.concatenate((np.ones(n_above, dtype=float), -np.ones(n_total - n_above, dtype=float)))
+    return reptrace_exact_one_sided_sign_p_value(effects)
 
 
 def evaluate_cross_subject_stimulus_smoke_controlled(
