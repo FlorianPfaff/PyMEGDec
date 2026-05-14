@@ -11,7 +11,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-import matplotlib
+import matplotlib  # noqa: E402
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
@@ -192,7 +192,6 @@ def main(argv: list[str] | None = None) -> int:
         all_outer_rows.extend(_rows_with_time(artifacts["outer"], float(center)))
         all_summary_rows.extend(_rows_with_time(artifacts["group_summary"], float(center)))
         if args.write_predictions:
-            suffix = _compact_float(center)
             all_prediction_rows.extend(_rows_with_time(artifacts["predictions"], float(center)))
             all_confusion_rows.extend(_rows_with_time(artifacts["confusion"], float(center)))
             all_per_stimulus_rows.extend(_rows_with_time(artifacts["per_stimulus"], float(center)))

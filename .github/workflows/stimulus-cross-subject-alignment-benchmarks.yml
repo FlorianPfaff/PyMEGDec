@@ -261,9 +261,9 @@ jobs:
             echo "Running cross-subject hyperalignment benchmark"
             pymegdec stimulus cross-subject-hyperalignment \
               "${common_args[@]}" \
-              --hyper-components "${HYPER_COMPONENTS}" \
-              --hyper-iterations "${HYPER_ITERATIONS}" \
-              --hyper-sample-mode "${HYPER_SAMPLE_MODE}" \
+              --hyperalignment-components "${HYPER_COMPONENTS}" \
+              --hyperalignment-iterations "${HYPER_ITERATIONS}" \
+              --hyperalignment-sample-mode "${HYPER_SAMPLE_MODE}" \
               --outer-output outputs/stimulus_cross_subject_hyperalignment_outer.csv \
               --summary-output outputs/stimulus_cross_subject_hyperalignment_group_summary.csv
           fi
