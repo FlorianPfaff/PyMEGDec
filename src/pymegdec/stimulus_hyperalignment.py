@@ -253,7 +253,14 @@ def summarize_cross_subject_hyperalignment(outer_rows, *, config=None):
     ]
 
 
-def _evaluate_hyperalignment_outer_fold(train_sets, test_set, config, classifier_param, *, label_shuffle_seed=None):
+def _evaluate_hyperalignment_outer_fold(  # pylint: disable=too-many-locals
+    train_sets,
+    test_set,
+    config,
+    classifier_param,
+    *,
+    label_shuffle_seed=None,
+):
     train_features_by_subject = {feature_set.participant: feature_set.features for feature_set in train_sets}
     train_labels_by_subject = {
         feature_set.participant: _training_labels(feature_set, label_shuffle_seed=label_shuffle_seed, context=(test_set.participant,)) for feature_set in train_sets
@@ -271,10 +278,9 @@ def _evaluate_hyperalignment_outer_fold(train_sets, test_set, config, classifier
         train_features_by_subject,
         train_labels_by_subject,
         sample_mode=config.hyperalignment_sample_mode,
-        max_repetitions_per_class=alignment_repetitions,
+        n_repetitions_per_class=alignment_repetitions,
         n_components=config.hyperalignment_components,
         n_iterations=config.hyperalignment_iterations,
-        initialization=config.hyperalignment_initialization,
     )
 
     transformed_train = []
@@ -290,15 +296,13 @@ def _evaluate_hyperalignment_outer_fold(train_sets, test_set, config, classifier
             {test_set.participant: test_set.features[calibration_mask]},
             {test_set.participant: np.asarray(test_set.labels, dtype=int)[calibration_mask]},
             sample_mode=config.hyperalignment_sample_mode,
-            classes=class_alignment.classes,
-            max_repetitions_per_class=class_alignment.n_repetitions_per_class,
+            n_repetitions_per_class=class_alignment.n_repetitions_per_class,
         )
         target_projection = fit_projection_to_hyperalignment(
-            hyperalignment_model,
             target_alignment.aligned_by_subject[test_set.participant],
-            subject_id=test_set.participant,
+            template=hyperalignment_model.template,
         )
-        test_matrix = transform_with_projection(target_projection, test_set.features[score_mask])
+        test_matrix = transform_with_projection(test_set.features[score_mask], target_projection)
         target_transform = "target_calibrated"
     else:
         target_mean = np.mean(test_set.features, axis=0) if config.target_centering == "target_unsupervised" else None
@@ -524,8 +528,7 @@ def _target_calibration_mask(labels, trials_per_class):
         class_indices = np.flatnonzero(labels == class_label)
         if class_indices.size <= trials_per_class:
             raise ValueError(
-                f"Target class {class_label} has {class_indices.size} trials, which is not enough for "
-                f"{trials_per_class} calibration trials plus at least one scored trial."
+                f"Target class {class_label} has {class_indices.size} trials, which is not enough for " f"{trials_per_class} calibration trials plus at least one scored trial."
             )
         mask[class_indices[:trials_per_class]] = True
     return mask
@@ -704,11 +707,18 @@ def _build_cross_subject_hyperalignment_parser(prog: str | None = None) -> argpa
     parser.add_argument("--normalization", choices=NORMALIZATION_MODES, default=DEFAULT_CROSS_SUBJECT_NORMALIZATION, help="Subject-level normalization mode.")
     parser.add_argument("--classifier", default=DEFAULT_CROSS_SUBJECT_CLASSIFIER, help="Classifier name.")
     parser.add_argument("--classifier-param", default=None, help="Classifier parameter value, JSON, Python literal, numeric value, or nan/default.")
-    parser.add_argument("--components-pca", type=parse_int_or_inf, default=DEFAULT_CROSS_SUBJECT_COMPONENTS_PCA, help="Post-hyperalignment PCA components for the classifier, or inf.")
+    parser.add_argument(
+        "--components-pca", type=parse_int_or_inf, default=DEFAULT_CROSS_SUBJECT_COMPONENTS_PCA, help="Post-hyperalignment PCA components for the classifier, or inf."
+    )
     parser.add_argument("--hyperalignment-components", type=parse_int_or_inf, default=DEFAULT_HYPERALIGNMENT_COMPONENTS, help="Number of hyperalignment components, or inf.")
     parser.add_argument("--hyperalignment-iterations", type=int, default=10, help="Number of Procrustes template-refinement iterations.")
     parser.add_argument("--hyperalignment-initialization", choices=("pca", "mean"), default="pca", help="Template initialization mode.")
-    parser.add_argument("--hyperalignment-sample-mode", choices=CLASS_ALIGNMENT_SAMPLE_MODES, default=DEFAULT_HYPERALIGNMENT_SAMPLE_MODE, help="How to build aligned hyperalignment rows from stimulus labels.")
+    parser.add_argument(
+        "--hyperalignment-sample-mode",
+        choices=CLASS_ALIGNMENT_SAMPLE_MODES,
+        default=DEFAULT_HYPERALIGNMENT_SAMPLE_MODE,
+        help="How to build aligned hyperalignment rows from stimulus labels.",
+    )
     parser.add_argument("--hyperalignment-repetitions-per-class", type=int, default=None, help="Optional cap for class_repetition alignment rows per class.")
     parser.add_argument(
         "--target-calibration-trials-per-class",

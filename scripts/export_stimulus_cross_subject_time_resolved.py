@@ -12,6 +12,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import matplotlib  # noqa: E402
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
@@ -38,9 +39,23 @@ from pymegdec.stimulus_cross_subject import (  # noqa: E402
 )
 
 DEFAULT_WINDOW_CENTERS = (
-    -0.200, -0.150, -0.100, -0.050, 0.000,
-    0.050, 0.100, 0.125, 0.150, 0.175, 0.200, 0.225,
-    0.250, 0.300, 0.400, 0.500, 0.600,
+    -0.200,
+    -0.150,
+    -0.100,
+    -0.050,
+    0.000,
+    0.050,
+    0.100,
+    0.125,
+    0.150,
+    0.175,
+    0.200,
+    0.225,
+    0.250,
+    0.300,
+    0.400,
+    0.500,
+    0.600,
 )
 
 
@@ -152,7 +167,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--predictions-output", default="outputs/stimulus_cross_subject_time_resolved_predictions.csv", help="Trial prediction CSV if --write-predictions is set.")
     parser.add_argument("--confusion-output", default="outputs/stimulus_cross_subject_time_resolved_confusion.csv", help="Confusion-count CSV if --write-predictions is set.")
     parser.add_argument("--per-stimulus-output", default="outputs/stimulus_cross_subject_time_resolved_per_stimulus.csv", help="Per-stimulus CSV if --write-predictions is set.")
-    parser.add_argument("--confusion-pairs-output", default="outputs/stimulus_cross_subject_time_resolved_confusion_pairs.csv", help="Confusion-pair CSV if --write-predictions is set.")
+    parser.add_argument(
+        "--confusion-pairs-output", default="outputs/stimulus_cross_subject_time_resolved_confusion_pairs.csv", help="Confusion-pair CSV if --write-predictions is set."
+    )
     return parser
 
 
@@ -209,19 +226,21 @@ def main(argv: list[str] | None = None) -> int:
     _plot_curve(all_summary_rows, args.plot_output)
 
     table = _readable_table(all_summary_rows)
-    readme = "\n".join([
-        "# Stimulus cross-subject time-resolved benchmark",
-        "",
-        "Fixed-pipeline leave-one-subject-out image-identity decoding using only `Part*Data.mat`.",
-        "Each row is a separate 22-to-1 LOSO benchmark at one window center; no nested tuning is performed.",
-        "",
-        "```",
-        table,
-        "```",
-        "",
-        f"Plot: `{args.plot_output}`",
-        "",
-    ])
+    readme = "\n".join(
+        [
+            "# Stimulus cross-subject time-resolved benchmark",
+            "",
+            "Fixed-pipeline leave-one-subject-out image-identity decoding using only `Part*Data.mat`.",
+            "Each row is a separate 22-to-1 LOSO benchmark at one window center; no nested tuning is performed.",
+            "",
+            "```",
+            table,
+            "```",
+            "",
+            f"Plot: `{args.plot_output}`",
+            "",
+        ]
+    )
     Path(args.readme_output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.readme_output).write_text(readme, encoding="utf-8")
     print(readme)

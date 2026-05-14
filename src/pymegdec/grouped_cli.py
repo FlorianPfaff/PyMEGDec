@@ -8,9 +8,7 @@ from collections.abc import Callable, Sequence
 
 from pymegdec import alpha_cli
 from pymegdec import cli as legacy_cli
-from pymegdec import stimulus_cli
-from pymegdec import stimulus_hyperalignment
-from pymegdec import stimulus_mcca
+from pymegdec import stimulus_cli, stimulus_hyperalignment, stimulus_mcca
 from pymegdec.data_download import download_meg_data_files
 from pymegdec.synthetic_data_cli import make_synthetic_data
 
@@ -89,7 +87,8 @@ def _print_main_help() -> None:
     parser.print_help()
     print(
         "\nCommand groups:\n"
-        "  pymegdec stimulus <cross-subject-hyperalignment|cross-subject-mcca|cross-subject-nested|cross-subject-smoke|decoding|predictions|robustness|temporal-generalization|onset-scan>\n"
+        "  pymegdec stimulus <cross-subject-hyperalignment|cross-subject-mcca|cross-subject-nested|cross-subject-smoke|"
+        "decoding|predictions|robustness|temporal-generalization|onset-scan>\n"
         "  pymegdec alpha <metrics|movement|movement-results|reaction-time|rt>\n"
         "  pymegdec data <download>\n"
         "\nCore commands:\n"

@@ -1,4 +1,5 @@
 """LOSO cross-subject stimulus decoding with RepTrace M-CCA alignment."""
+
 from __future__ import annotations
 
 import argparse
@@ -37,7 +38,7 @@ TARGET_CENTERING_MODES = ("group_mean", "target_unsupervised")
 
 
 @dataclass(frozen=True)
-class CrossSubjectMCCAConfig:
+class CrossSubjectMCCAConfig:  # pylint: disable=too-many-instance-attributes
     window_center: float = DEFAULT_CROSS_SUBJECT_WINDOW_CENTER
     window_size: float = DEFAULT_CROSS_SUBJECT_WINDOW_SIZE
     baseline_window: tuple[float, float] = DEFAULT_CROSS_SUBJECT_BASELINE_WINDOW
@@ -116,9 +117,39 @@ def evaluate_cross_subject_mcca(data_folder, participants, *, config=None, outer
     }
 
 
-def export_cross_subject_mcca(data_folder, participants, *, outer_output_path, group_summary_output_path=None, predictions_output_path=None, confusion_output_path=None, per_stimulus_output_path=None, confusion_pairs_output_path=None, config=None, outer_participants=None, progress=None, label_shuffle_control=False, label_shuffle_seed=0):
-    artifacts = evaluate_cross_subject_mcca(data_folder, participants, config=config, outer_participants=outer_participants, progress=progress, label_shuffle_control=label_shuffle_control, label_shuffle_seed=label_shuffle_seed)
-    for rows, path in ((artifacts["outer"], outer_output_path), (artifacts["group_summary"], group_summary_output_path), (artifacts["predictions"], predictions_output_path), (artifacts["confusion"], confusion_output_path), (artifacts["per_stimulus"], per_stimulus_output_path), (artifacts["confusion_pairs"], confusion_pairs_output_path)):
+def export_cross_subject_mcca(  # pylint: disable=too-many-arguments
+    data_folder,
+    participants,
+    *,
+    outer_output_path,
+    group_summary_output_path=None,
+    predictions_output_path=None,
+    confusion_output_path=None,
+    per_stimulus_output_path=None,
+    confusion_pairs_output_path=None,
+    config=None,
+    outer_participants=None,
+    progress=None,
+    label_shuffle_control=False,
+    label_shuffle_seed=0,
+):
+    artifacts = evaluate_cross_subject_mcca(
+        data_folder,
+        participants,
+        config=config,
+        outer_participants=outer_participants,
+        progress=progress,
+        label_shuffle_control=label_shuffle_control,
+        label_shuffle_seed=label_shuffle_seed,
+    )
+    for rows, path in (
+        (artifacts["outer"], outer_output_path),
+        (artifacts["group_summary"], group_summary_output_path),
+        (artifacts["predictions"], predictions_output_path),
+        (artifacts["confusion"], confusion_output_path),
+        (artifacts["per_stimulus"], per_stimulus_output_path),
+        (artifacts["confusion_pairs"], confusion_pairs_output_path),
+    ):
         if path and rows:
             write_alpha_metrics_csv(rows, path)
     return artifacts
@@ -127,12 +158,26 @@ def export_cross_subject_mcca(data_folder, participants, *, outer_output_path, g
 def _fold(train_sets, test_set, config, classifier_param, label_shuffle_seed):
     labels_by_subject = {item.participant: _labels(item.labels, label_shuffle_seed, test_set.participant, item.participant) for item in train_sets}
     features_by_subject = {item.participant: item.features for item in train_sets}
-    model, alignment = fit_class_mcca(features_by_subject, labels_by_subject, sample_mode=config.mcca_sample_mode, n_repetitions_per_class=config.mcca_repetitions_per_class, n_components=config.mcca_components, regularization=config.mcca_regularization, subject_pca_components=config.mcca_subject_pca_components)
+    model, alignment = fit_class_mcca(
+        features_by_subject,
+        labels_by_subject,
+        sample_mode=config.mcca_sample_mode,
+        n_repetitions_per_class=config.mcca_repetitions_per_class,
+        n_components=config.mcca_components,
+        regularization=config.mcca_regularization,
+        subject_pca_components=config.mcca_subject_pca_components,
+    )
     train_x = np.vstack([model.transform(item.participant, item.features) for item in train_sets])
     train_y = np.concatenate([labels_by_subject[item.participant] for item in train_sets])
     test_mean = np.mean(test_set.features, axis=0) if config.target_centering == "target_unsupervised" else None
     test_x = model.transform_group(test_set.features, feature_mean=test_mean)
-    bundle = fit_window_model(train_x, train_y, fit_model=lambda x, y: train_multiclass_classifier(x, y, config.classifier, classifier_param, random_state=config.random_state), components_pca=config.components_pca, train_window=(config.window_center - config.window_size / 2, config.window_center + config.window_size / 2))
+    bundle = fit_window_model(
+        train_x,
+        train_y,
+        fit_model=lambda x, y: train_multiclass_classifier(x, y, config.classifier, classifier_param, random_state=config.random_state),
+        components_pca=config.components_pca,
+        train_window=(config.window_center - config.window_size / 2, config.window_center + config.window_size / 2),
+    )
     y_pred, _ = predict_window_model(bundle, test_x)
     score_matrix, class_order = _score_matrix(bundle, test_x)
     top2, top3, mean_rank, rank_rows = _rank_metrics(score_matrix, class_order, test_set.labels)
@@ -165,7 +210,17 @@ def _fold(train_sets, test_set, config, classifier_param, label_shuffle_seed):
     }
     rows = []
     for i, (truth, pred) in enumerate(zip(test_set.labels, y_pred, strict=True)):
-        rows.append({**meta, "test_participant": test_set.participant, "trial_index": i, "true_stimulus": int(truth), "predicted_stimulus": int(pred), "correct": bool(truth == pred), **rank_rows[i]})
+        rows.append(
+            {
+                **meta,
+                "test_participant": test_set.participant,
+                "trial_index": i,
+                "true_stimulus": int(truth),
+                "predicted_stimulus": int(pred),
+                "correct": bool(truth == pred),
+                **rank_rows[i],
+            }
+        )
     return outer, rows
 
 
@@ -177,34 +232,36 @@ def summarize_cross_subject_mcca(outer_rows, *, config=None):
     raw = np.asarray([float(row["accuracy"]) for row in outer_rows])
     chance = float(outer_rows[0]["chance_accuracy"])
     diff = balanced - chance
-    return [{
-        **_meta(config),
-        "n_outer_folds": len(outer_rows),
-        "n_test_participants": len(outer_rows),
-        "chance_accuracy": chance,
-        "chance_percent": 100.0 * chance,
-        "accuracy_mean": float(np.mean(raw)),
-        "accuracy_median": float(np.median(raw)),
-        "accuracy_sem": _sem(raw),
-        "percent_mean": float(100.0 * np.mean(raw)),
-        "balanced_accuracy_mean": float(np.mean(balanced)),
-        "balanced_accuracy_median": float(np.median(balanced)),
-        "balanced_accuracy_sem": _sem(balanced),
-        "balanced_percent_mean": float(100.0 * np.mean(balanced)),
-        "top2_accuracy_mean": _nanmean([row.get("top2_accuracy", np.nan) for row in outer_rows]),
-        "top3_accuracy_mean": _nanmean([row.get("top3_accuracy", np.nan) for row in outer_rows]),
-        "mean_true_label_rank_mean": _nanmean([row.get("mean_true_label_rank", np.nan) for row in outer_rows]),
-        "chance_mean_rank": 0.5 * ((1.0 / chance) + 1.0),
-        "mean_above_chance": float(np.mean(diff)),
-        "percent_above_chance": float(100.0 * np.mean(diff)),
-        "participants_above_chance": int(np.sum(diff > 0)),
-        "participants_total": int(len(diff)),
-        "participants_at_or_below_chance": int(np.sum(diff <= 0)),
-        "one_sided_exact_sign_p_value": _exact_sign_p(diff),
-        "one_sided_signflip_p_value": _signflip_p(diff, config.signflip_permutations, config.signflip_seed),
-        "label_shuffle_control": outer_rows[0].get("label_shuffle_control", False),
-        "label_shuffle_seed": outer_rows[0].get("label_shuffle_seed", ""),
-    }]
+    return [
+        {
+            **_meta(config),
+            "n_outer_folds": len(outer_rows),
+            "n_test_participants": len(outer_rows),
+            "chance_accuracy": chance,
+            "chance_percent": 100.0 * chance,
+            "accuracy_mean": float(np.mean(raw)),
+            "accuracy_median": float(np.median(raw)),
+            "accuracy_sem": _sem(raw),
+            "percent_mean": float(100.0 * np.mean(raw)),
+            "balanced_accuracy_mean": float(np.mean(balanced)),
+            "balanced_accuracy_median": float(np.median(balanced)),
+            "balanced_accuracy_sem": _sem(balanced),
+            "balanced_percent_mean": float(100.0 * np.mean(balanced)),
+            "top2_accuracy_mean": _nanmean([row.get("top2_accuracy", np.nan) for row in outer_rows]),
+            "top3_accuracy_mean": _nanmean([row.get("top3_accuracy", np.nan) for row in outer_rows]),
+            "mean_true_label_rank_mean": _nanmean([row.get("mean_true_label_rank", np.nan) for row in outer_rows]),
+            "chance_mean_rank": 0.5 * ((1.0 / chance) + 1.0),
+            "mean_above_chance": float(np.mean(diff)),
+            "percent_above_chance": float(100.0 * np.mean(diff)),
+            "participants_above_chance": int(np.sum(diff > 0)),
+            "participants_total": int(len(diff)),
+            "participants_at_or_below_chance": int(np.sum(diff <= 0)),
+            "one_sided_exact_sign_p_value": _exact_sign_p(diff),
+            "one_sided_signflip_p_value": _signflip_p(diff, config.signflip_permutations, config.signflip_seed),
+            "label_shuffle_control": outer_rows[0].get("label_shuffle_control", False),
+            "label_shuffle_seed": outer_rows[0].get("label_shuffle_seed", ""),
+        }
+    ]
 
 
 def _meta(config):
@@ -367,16 +424,41 @@ def stimulus_cross_subject_mcca(argv: Sequence[str] | None = None, prog: str | N
     participants = parse_participant_spec(args.participants)
     outer_participants = parse_participant_spec(args.outer_participants) if args.outer_participants else None
     config = CrossSubjectMCCAConfig(
-        window_center=args.window_center, window_size=args.window_size, baseline_window=args.baseline_window,
-        feature_mode=args.feature_mode, normalization=args.normalization, classifier=args.classifier,
-        classifier_param=parse_classifier_param(args.classifier_param), components_pca=args.components_pca,
-        max_trials_per_class_per_participant=args.max_trials_per_class_per_participant, chance_classes=args.chance_classes,
-        random_state=args.random_state, signflip_permutations=args.signflip_permutations, signflip_seed=args.signflip_seed,
-        mcca_components=args.mcca_components, mcca_regularization=args.mcca_regularization,
-        mcca_subject_pca_components=args.mcca_subject_pca_components, mcca_sample_mode=args.mcca_sample_mode,
-        mcca_repetitions_per_class=args.mcca_repetitions_per_class, target_centering=args.target_centering,
+        window_center=args.window_center,
+        window_size=args.window_size,
+        baseline_window=args.baseline_window,
+        feature_mode=args.feature_mode,
+        normalization=args.normalization,
+        classifier=args.classifier,
+        classifier_param=parse_classifier_param(args.classifier_param),
+        components_pca=args.components_pca,
+        max_trials_per_class_per_participant=args.max_trials_per_class_per_participant,
+        chance_classes=args.chance_classes,
+        random_state=args.random_state,
+        signflip_permutations=args.signflip_permutations,
+        signflip_seed=args.signflip_seed,
+        mcca_components=args.mcca_components,
+        mcca_regularization=args.mcca_regularization,
+        mcca_subject_pca_components=args.mcca_subject_pca_components,
+        mcca_sample_mode=args.mcca_sample_mode,
+        mcca_repetitions_per_class=args.mcca_repetitions_per_class,
+        target_centering=args.target_centering,
     )
-    artifacts = export_cross_subject_mcca(args.data_folder, participants, outer_output_path=args.outer_output, group_summary_output_path=args.summary_output, predictions_output_path=args.predictions_output, confusion_output_path=args.confusion_output, per_stimulus_output_path=args.per_stimulus_output, confusion_pairs_output_path=args.confusion_pairs_output, config=config, outer_participants=outer_participants, progress=lambda msg: print(msg, flush=True), label_shuffle_control=args.label_shuffle_control, label_shuffle_seed=args.label_shuffle_seed)
+    artifacts = export_cross_subject_mcca(
+        args.data_folder,
+        participants,
+        outer_output_path=args.outer_output,
+        group_summary_output_path=args.summary_output,
+        predictions_output_path=args.predictions_output,
+        confusion_output_path=args.confusion_output,
+        per_stimulus_output_path=args.per_stimulus_output,
+        confusion_pairs_output_path=args.confusion_pairs_output,
+        config=config,
+        outer_participants=outer_participants,
+        progress=lambda msg: print(msg, flush=True),
+        label_shuffle_control=args.label_shuffle_control,
+        label_shuffle_seed=args.label_shuffle_seed,
+    )
     print(f"Wrote {len(artifacts['outer'])} held-out participant rows to {args.outer_output}")
     print(f"Wrote {len(artifacts['group_summary'])} group summary rows to {args.summary_output}")
     print(f"Wrote {len(artifacts['predictions'])} trial prediction rows to {args.predictions_output}")
