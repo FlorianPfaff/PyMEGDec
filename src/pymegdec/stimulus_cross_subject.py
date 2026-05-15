@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from collections import Counter
 from dataclasses import dataclass
 from itertools import product
@@ -47,11 +48,20 @@ DEFAULT_CROSS_SUBJECT_CLASSIFIER = "multiclass-svm"
 DEFAULT_CROSS_SUBJECT_COMPONENTS_PCA = 64
 DEFAULT_CROSS_SUBJECT_NESTED_WINDOW_CENTERS = (0.150, 0.175, 0.200)
 DEFAULT_CROSS_SUBJECT_SELECTION_METRIC = "balanced_accuracy"
-FEATURE_MODES = ("sensor_mean", "sensor_flat")
+FEATURE_MODES = (
+    "sensor_mean",
+    "sensor_flat",
+    "sensor_covariance_tangent",
+    "sensor_covariance_tangent32",
+    "sensor_covariance_tangent64",
+)
 NORMALIZATION_MODES = ("none", "subject_z", "subject_trial_z", "subject_baseline_z", "subject_baseline_whiten")
 ALIGNMENT_MODES = ("none", "train_class_procrustes")
 BASELINE_WHITENING_SHRINKAGE = 0.1
 BASELINE_WHITENING_EIGENVALUE_FLOOR = 1e-6
+COVARIANCE_TANGENT_DEFAULT_COMPONENTS = 32
+COVARIANCE_TANGENT_SHRINKAGE = 0.1
+COVARIANCE_TANGENT_EIGENVALUE_FLOOR = 1e-8
 CROSS_SUBJECT_PREDICTION_GROUP_COLUMNS = (
     "window_center_s",
     "feature_mode",
@@ -268,10 +278,11 @@ def load_participant_stimulus_features(data_folder, participant, *, config=None)
     all_labels = _trialinfo_labels(data)
     trial_indices = _selected_trial_indices(all_labels, config.max_trials_per_class_per_participant)
     labels = all_labels[trial_indices]
+    extraction_feature_mode = "sensor_flat" if _is_covariance_tangent_feature_mode(config.feature_mode) else config.feature_mode
     features, n_window_samples = _extract_window_features(
         data,
         _centered_window(config.window_center, config.window_size),
-        feature_mode=config.feature_mode,
+        feature_mode=extraction_feature_mode,
         trial_indices=trial_indices,
     )
     baseline_features = None
@@ -1197,6 +1208,7 @@ def _fit_outer_fold_model(train_sets, config, classifier_param, *, label_shuffle
     train_features = np.vstack(train_features_by_subject)
     train_labels_one_based = np.concatenate(train_label_arrays)
     train_labels = train_labels_one_based - 1
+    train_features, feature_transform_metadata = _fit_training_feature_transform(train_features, train_sets, config)
 
     train_window = _centered_window(config.window_center, config.window_size)
     model_bundle = fit_reptrace_window_model(
@@ -1223,12 +1235,14 @@ def _fit_outer_fold_model(train_sets, config, classifier_param, *, label_shuffle
         "label_shuffle_control": label_shuffle_seed is not None,
         "label_shuffle_seed": "" if label_shuffle_seed is None else int(label_shuffle_seed),
         "alignment_metadata": alignment_metadata,
+        "feature_transform_metadata": feature_transform_metadata,
     }
 
 
 def _score_outer_fold_model(fitted_model, test_set, config, *, include_predictions=True):
     model_bundle = fitted_model["model_bundle"]
     test_features = _normalized_subject_features(test_set, config)
+    test_features = _apply_fitted_feature_transform(test_features, fitted_model["feature_transform_metadata"])
     test_labels_one_based = test_set.labels
     test_labels = test_labels_one_based - 1
     predictions, _scores = predict_reptrace_window_model(model_bundle, test_features)
@@ -1243,6 +1257,7 @@ def _score_outer_fold_model(fitted_model, test_set, config, *, include_predictio
     train_labels = fitted_model["train_labels"]
     train_window = fitted_model["train_window"]
     alignment_metadata = fitted_model["alignment_metadata"]
+    feature_transform_metadata = fitted_model["feature_transform_metadata"]
 
     outer_row = {
         "outer_fold": int(test_set.participant),
@@ -1296,6 +1311,9 @@ def _score_outer_fold_model(fitted_model, test_set, config, *, include_predictio
         "label_shuffle_seed": fitted_model["label_shuffle_seed"],
         "alignment_common_classes": alignment_metadata["common_classes"],
         "alignment_aligned_participants": alignment_metadata["aligned_participants"],
+        "feature_transform": feature_transform_metadata["name"],
+        "covariance_tangent_components": feature_transform_metadata["covariance_tangent_components"],
+        "covariance_tangent_feature_count": feature_transform_metadata["covariance_tangent_feature_count"],
     }
     prediction_rows = []
     if include_predictions:
@@ -1306,11 +1324,12 @@ def _score_outer_fold_model(fitted_model, test_set, config, *, include_predictio
             rank_metrics["true_label_ranks"],
             config=config,
             actual_components_pca=model_bundle.actual_components_pca,
+            feature_transform_metadata=feature_transform_metadata,
         )
     return outer_row, prediction_rows
 
 
-def _prediction_rows(test_set, test_labels, predictions, true_label_ranks, *, config, actual_components_pca):
+def _prediction_rows(test_set, test_labels, predictions, true_label_ranks, *, config, actual_components_pca, feature_transform_metadata):
     train_window = _centered_window(config.window_center, config.window_size)
     rows = []
     for trial_idx, (true_label, predicted_label, true_label_rank) in enumerate(zip(test_labels, predictions, true_label_ranks)):
@@ -1330,6 +1349,9 @@ def _prediction_rows(test_set, test_labels, predictions, true_label_ranks, *, co
                 "components_pca": config.components_pca,
                 "max_trials_per_class_per_participant": config.max_trials_per_class_per_participant,
                 "actual_components_pca": actual_components_pca,
+                "feature_transform": feature_transform_metadata["name"],
+                "covariance_tangent_components": feature_transform_metadata["covariance_tangent_components"],
+                "covariance_tangent_feature_count": feature_transform_metadata["covariance_tangent_feature_count"],
                 "trial": int(trial_idx),
                 "test_trial_index": int(trial_idx),
                 "test_trial_number": int(trial_idx + 1),
@@ -1344,6 +1366,134 @@ def _prediction_rows(test_set, test_labels, predictions, true_label_ranks, *, co
             }
         )
     return rows
+
+
+def _fit_training_feature_transform(features, train_sets, config):
+    if not _is_covariance_tangent_feature_mode(config.feature_mode):
+        return features, _feature_transform_metadata("none")
+    if config.alignment != "none":
+        raise ValueError("sensor_covariance_tangent feature modes require alignment='none'.")
+    transform = _fit_covariance_tangent_transform(features, train_sets[0], config)
+    return _apply_covariance_tangent_transform(features, transform), transform
+
+
+def _apply_fitted_feature_transform(features, feature_transform_metadata):
+    if feature_transform_metadata["name"] == "none":
+        return features
+    if feature_transform_metadata["name"] == "sensor_covariance_tangent":
+        return _apply_covariance_tangent_transform(features, feature_transform_metadata)
+    raise ValueError(f"Unsupported feature transform: {feature_transform_metadata['name']}")
+
+
+def _feature_transform_metadata(name, *, covariance_tangent_components="", covariance_tangent_feature_count="", **kwargs):
+    metadata = {
+        "name": name,
+        "covariance_tangent_components": covariance_tangent_components,
+        "covariance_tangent_feature_count": covariance_tangent_feature_count,
+    }
+    metadata.update(kwargs)
+    return metadata
+
+
+def _fit_covariance_tangent_transform(features, feature_set, config):
+    n_components = min(_covariance_tangent_components(config.feature_mode), int(feature_set.n_channels))
+    windows = _features_as_trial_channel_matrix(features, feature_set)
+    pca_mean, projection = _fit_covariance_channel_projection(windows, n_components)
+    covariances = _projected_trial_covariances(windows, pca_mean, projection)
+    reference = _regularize_spd(np.mean(covariances, axis=0), floor=COVARIANCE_TANGENT_EIGENVALUE_FLOOR)
+    reference_inverse_sqrt = _matrix_inverse_sqrt_spd(reference)
+    feature_count = int(n_components * (n_components + 1) // 2)
+    return _feature_transform_metadata(
+        "sensor_covariance_tangent",
+        covariance_tangent_components=int(n_components),
+        covariance_tangent_feature_count=feature_count,
+        n_channels=int(feature_set.n_channels),
+        n_window_samples=int(feature_set.n_window_samples),
+        pca_mean=pca_mean,
+        projection=projection,
+        reference_inverse_sqrt=reference_inverse_sqrt,
+        upper_triangle_indices=np.triu_indices(int(n_components)),
+    )
+
+
+def _fit_covariance_channel_projection(windows, n_components):
+    samples = np.asarray(windows, dtype=float).reshape(-1, windows.shape[2])
+    mean = np.mean(samples, axis=0)
+    centered = samples - mean
+    covariance = _regularize_spd(_covariance_matrix(centered), floor=COVARIANCE_TANGENT_EIGENVALUE_FLOOR)
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    order = np.argsort(eigenvalues)[::-1]
+    projection = eigenvectors[:, order[: int(n_components)]]
+    return mean, projection
+
+
+def _apply_covariance_tangent_transform(features, transform):
+    windows = _features_as_trial_channel_matrix_from_shape(
+        features,
+        int(transform["n_channels"]),
+        int(transform["n_window_samples"]),
+    )
+    covariances = _projected_trial_covariances(windows, transform["pca_mean"], transform["projection"])
+    return _covariances_to_tangent(covariances, transform["reference_inverse_sqrt"], transform["upper_triangle_indices"])
+
+
+def _features_as_trial_channel_matrix_from_shape(features, n_channels, n_window_samples):
+    features = np.asarray(features, dtype=float)
+    expected_width = int(n_channels) * int(n_window_samples)
+    if features.ndim != 2 or features.shape[1] != expected_width:
+        raise ValueError("Feature width is incompatible with covariance tangent transform metadata.")
+    return features.reshape(features.shape[0], int(n_window_samples), int(n_channels))
+
+
+def _projected_trial_covariances(windows, pca_mean, projection):
+    covariances = []
+    for window in np.asarray(windows, dtype=float):
+        projected = (window - pca_mean) @ projection
+        covariances.append(_regularize_spd(_time_covariance(projected), floor=COVARIANCE_TANGENT_EIGENVALUE_FLOOR))
+    return np.stack(covariances, axis=0)
+
+
+def _time_covariance(window):
+    centered = np.asarray(window, dtype=float) - np.mean(window, axis=0, keepdims=True)
+    denominator = max(int(centered.shape[0]) - 1, 1)
+    return (centered.T @ centered) / float(denominator)
+
+
+def _regularize_spd(covariance, *, floor):
+    covariance = _shrink_covariance(np.asarray(covariance, dtype=float), shrinkage=COVARIANCE_TANGENT_SHRINKAGE)
+    covariance = 0.5 * (covariance + covariance.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    scale = max(float(np.max(eigenvalues)), 1.0)
+    eigenvalues = np.maximum(eigenvalues, float(floor) * scale)
+    regularized = (eigenvectors * eigenvalues) @ eigenvectors.T
+    return 0.5 * (regularized + regularized.T)
+
+
+def _matrix_inverse_sqrt_spd(matrix):
+    eigenvalues, eigenvectors = np.linalg.eigh(np.asarray(matrix, dtype=float))
+    eigenvalues = np.maximum(eigenvalues, COVARIANCE_TANGENT_EIGENVALUE_FLOOR)
+    inverse_sqrt = 1.0 / np.sqrt(eigenvalues)
+    return (eigenvectors * inverse_sqrt) @ eigenvectors.T
+
+
+def _covariances_to_tangent(covariances, reference_inverse_sqrt, upper_triangle_indices):
+    rows = []
+    row_indices, column_indices = upper_triangle_indices
+    off_diagonal = row_indices != column_indices
+    for covariance in covariances:
+        whitened = reference_inverse_sqrt @ covariance @ reference_inverse_sqrt
+        tangent_matrix = _matrix_log_spd(0.5 * (whitened + whitened.T))
+        row = tangent_matrix[upper_triangle_indices]
+        row = np.asarray(row, dtype=float)
+        row[off_diagonal] *= np.sqrt(2.0)
+        rows.append(row)
+    return np.vstack(rows)
+
+
+def _matrix_log_spd(matrix):
+    eigenvalues, eigenvectors = np.linalg.eigh(np.asarray(matrix, dtype=float))
+    eigenvalues = np.maximum(eigenvalues, COVARIANCE_TANGENT_EIGENVALUE_FLOOR)
+    return (eigenvectors * np.log(eigenvalues)) @ eigenvectors.T
 
 
 def _model_class_scores(model_bundle, features):
@@ -1429,7 +1579,7 @@ def _baseline_feature_statistics(data, config, n_window_samples, trial_indices):
         std = np.std(baseline_features, axis=0, keepdims=True)
         return mean, _nonzero_std(std), n_baseline_samples
 
-    if config.feature_mode == "sensor_flat":
+    if config.feature_mode == "sensor_flat" or _is_covariance_tangent_feature_mode(config.feature_mode):
         channel_mean, channel_std, n_baseline_samples = _baseline_channel_statistics(data, config.baseline_window, trial_indices)
         mean = np.tile(channel_mean, int(n_window_samples))[None, :]
         std = np.tile(channel_std, int(n_window_samples))[None, :]
@@ -1630,7 +1780,7 @@ def _baseline_whiten_features(features, config, baseline_feature_mean, baseline_
     whitening_matrix = np.asarray(baseline_whitening_matrix, dtype=float)
     if config.feature_mode == "sensor_mean":
         return centered @ whitening_matrix.T
-    if config.feature_mode == "sensor_flat":
+    if config.feature_mode == "sensor_flat" or _is_covariance_tangent_feature_mode(config.feature_mode):
         return _baseline_whiten_sensor_flat_features(centered, whitening_matrix)
     raise ValueError(f"Unsupported feature_mode: {config.feature_mode}")
 
@@ -1831,9 +1981,35 @@ def _normalize_trial_cap(value):
 
 def _normalize_feature_mode(value):
     normalized = str(value).strip().lower().replace("-", "_")
+    aliases = {
+        "covariance_tangent": "sensor_covariance_tangent",
+        "sensor_covariance": "sensor_covariance_tangent",
+        "sensor_covariance_tangent_32": "sensor_covariance_tangent32",
+        "sensor_covariance_tangent_64": "sensor_covariance_tangent64",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if _is_covariance_tangent_feature_mode(normalized):
+        return normalized
     if normalized not in FEATURE_MODES:
         raise ValueError(f"feature_mode must be one of {FEATURE_MODES}.")
     return normalized
+
+
+def _is_covariance_tangent_feature_mode(value):
+    return _covariance_tangent_match(value) is not None
+
+
+def _covariance_tangent_components(value):
+    match = _covariance_tangent_match(value)
+    if match is None:
+        raise ValueError(f"Not a covariance tangent feature mode: {value}")
+    if match.group("components"):
+        return int(match.group("components"))
+    return COVARIANCE_TANGENT_DEFAULT_COMPONENTS
+
+
+def _covariance_tangent_match(value):
+    return re.fullmatch(r"sensor_covariance_tangent(?P<components>\d+)?", str(value).strip().lower().replace("-", "_"))
 
 
 def _normalize_normalization(value):

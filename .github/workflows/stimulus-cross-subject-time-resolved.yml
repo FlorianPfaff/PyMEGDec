@@ -70,6 +70,8 @@ on:
         options:
           - sensor_mean
           - sensor_flat
+          - sensor_covariance_tangent32
+          - sensor_covariance_tangent64
       normalization:
         description: Subject normalization mode.
         required: true

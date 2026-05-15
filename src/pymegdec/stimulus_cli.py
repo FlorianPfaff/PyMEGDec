@@ -32,6 +32,7 @@ from pymegdec.stimulus_cross_subject import (
     DEFAULT_CROSS_SUBJECT_PARTICIPANTS,
     DEFAULT_CROSS_SUBJECT_WINDOW_CENTER,
     DEFAULT_CROSS_SUBJECT_WINDOW_SIZE,
+    FEATURE_MODES,
     NORMALIZATION_MODES,
     CrossSubjectStimulusConfig,
     export_cross_subject_stimulus_smoke,
@@ -97,7 +98,14 @@ def _normalization_token(value: str) -> str:
 
 
 def _feature_mode_token(value: str) -> str:
-    return value.strip().lower().replace("-", "_")
+    normalized = value.strip().lower().replace("-", "_")
+    aliases = {
+        "covariance_tangent": "sensor_covariance_tangent",
+        "sensor_covariance": "sensor_covariance_tangent",
+        "sensor_covariance_tangent_32": "sensor_covariance_tangent32",
+        "sensor_covariance_tangent_64": "sensor_covariance_tangent64",
+    }
+    return aliases.get(normalized, normalized)
 
 
 def _alignment_token(value: str) -> str:
@@ -243,9 +251,7 @@ def _build_cross_subject_smoke_parser(prog: str | None = None) -> argparse.Argum
     parser.add_argument("--window-center", type=float, default=DEFAULT_CROSS_SUBJECT_WINDOW_CENTER, help="Stimulus decoding window center in seconds.")
     parser.add_argument("--window-size", type=float, default=DEFAULT_CROSS_SUBJECT_WINDOW_SIZE, help="Stimulus decoding window size in seconds.")
     parser.add_argument("--baseline-window", type=_parse_time_window, default=DEFAULT_CROSS_SUBJECT_BASELINE_WINDOW, help="Baseline window as start,stop in seconds.")
-    parser.add_argument(
-        "--feature-mode", type=_feature_mode_token, default=DEFAULT_CROSS_SUBJECT_FEATURE_MODE, choices=("sensor_mean", "sensor_flat"), help="Feature extraction mode."
-    )
+    parser.add_argument("--feature-mode", type=_feature_mode_token, default=DEFAULT_CROSS_SUBJECT_FEATURE_MODE, choices=FEATURE_MODES, help="Feature extraction mode.")
     parser.add_argument(
         "--normalization",
         type=_normalization_token,

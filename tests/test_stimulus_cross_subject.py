@@ -161,6 +161,34 @@ class TestStimulusCrossSubject(unittest.TestCase):
         self.assertTrue(np.allclose(feature_set.baseline_whitening_matrix, feature_set.baseline_whitening_matrix.T))
         self.assertTrue(np.all(np.isfinite(feature_set.features)))
 
+    def test_cross_subject_can_use_covariance_tangent_features(self):
+        time = np.asarray([-0.5, 0.0, 0.15, 0.2, 0.25], dtype=float)
+        class_one = np.asarray([[0.0, 0.0, -1.0, 0.0, 1.0], [0.0, 0.0, -1.0, 0.0, 1.0]])
+        class_two = np.asarray([[0.0, 0.0, -1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0, -1.0]])
+        data_by_participant = {
+            participant: _mat_data_from_trials([1, 2, 1, 2], [class_one, class_two, class_one, class_two], time)
+            for participant in (1, 2, 3, 4)
+        }
+        config = CrossSubjectStimulusConfig(
+            window_center=0.2,
+            window_size=0.1,
+            feature_mode="sensor_covariance_tangent",
+            normalization="none",
+            classifier="multiclass-svm",
+            classifier_param=0.5,
+            components_pca=float("inf"),
+            chance_classes=2,
+            signflip_permutations=128,
+        )
+
+        with patch("pymegdec.stimulus_cross_subject.sio.loadmat", side_effect=_loadmat_side_effect(data_by_participant)):
+            artifacts = evaluate_cross_subject_stimulus_smoke("unused", [1, 2, 3, 4], config=config)
+
+        self.assertEqual({row["feature_transform"] for row in artifacts["outer"]}, {"sensor_covariance_tangent"})
+        self.assertEqual({row["covariance_tangent_components"] for row in artifacts["outer"]}, {2})
+        self.assertEqual({row["covariance_tangent_feature_count"] for row in artifacts["outer"]}, {3})
+        self.assertEqual({row["balanced_accuracy"] for row in artifacts["outer"]}, {1.0})
+
     def test_load_participant_stimulus_features_can_cap_trials_per_class(self):
         data_by_participant = {1: _mat_data([1, 2, 1, 2, 1, 2], [-1.0, 1.0, -0.9, 0.9, -0.8, 0.8])}
         config = CrossSubjectStimulusConfig(
