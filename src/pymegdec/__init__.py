@@ -60,6 +60,9 @@ from pymegdec.stimulus_decoding import (
     summarize_stimulus_prediction_diagnostics,
     summarize_stimulus_temporal_generalization,
 )
+from pymegdec._mcca_score_matrix import apply_mcca_score_matrix
+
+apply_mcca_score_matrix()
 
 __version__ = "0.1.0"
 
