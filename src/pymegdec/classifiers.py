@@ -172,6 +172,9 @@ class _DecodedLabelClassifier:
     def __getattr__(self, name):
         return getattr(self.model, name)
 
+    def __getitem__(self, key):
+        return self.model[key]
+
     def predict(self, features):
         encoded_predictions = np.asarray(self.model.predict(features), dtype=int)
         return self._decode(encoded_predictions)
