@@ -53,12 +53,10 @@ from pymegdec.stimulus_decoding import (
     export_stimulus_onset_scan,
     export_stimulus_temporal_generalization,
     export_time_resolved_stimulus_decoding,
-    summarize_stimulus_decoding,
     summarize_stimulus_decoding_peaks,
     summarize_stimulus_onset_events,
     summarize_stimulus_onset_scan,
     summarize_stimulus_prediction_diagnostics,
-    summarize_stimulus_temporal_generalization,
 )
 from pymegdec._conservative_topk import apply_conservative_topk_metrics
 from pymegdec._mcca_score_matrix import apply_mcca_score_matrix

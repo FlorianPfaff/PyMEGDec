@@ -196,7 +196,7 @@ def _anchored_plane_axes(normal):
         raise ValueError("Could not determine a stable sensor projection plane normal.")
     normal = normal / normal_norm
 
-    anchored_axes = []
+    anchored_axes: list[np.ndarray] = []
     for reference in np.eye(3):
         # Project the next global coordinate axis into the PCA plane, then
         # orthogonalize it against already chosen in-plane axes.  This makes the
