@@ -45,6 +45,48 @@ class TestReactionTimeAnalysis(unittest.TestCase):
         self.assertEqual(loaded[0]["dataset"], "main")
         self.assertEqual(loaded[1]["reaction_time"], 0.50)
 
+    def test_load_reaction_time_csv_converts_one_based_trials(self):
+        rows = [
+            {"participant": 2, "trial": 1, "rt": 0.45},
+            {"participant": 2, "trial": 2, "rt": 0.50},
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "rt.csv"
+            write_csv_rows(rows, path)
+
+            loaded = load_reaction_time_csv(path, ReactionTimeCsvConfig(trial_index_base=1))
+
+        self.assertEqual([row["trial"] for row in loaded], [0, 1])
+
+    def test_load_reaction_time_csv_rejects_negative_zero_based_trials(self):
+        rows = [
+            {"participant": 2, "trial": 0, "rt": 0.45},
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "rt.csv"
+            write_csv_rows(rows, path)
+
+            with self.assertRaisesRegex(ValueError, "negative zero-based"):
+                load_reaction_time_csv(path, ReactionTimeCsvConfig(trial_index_base=1))
+
+    def test_join_detects_likely_one_based_external_trials(self):
+        alpha_rows = [
+            {"participant": 2, "dataset": "main", "trial": trial_idx}
+            for trial_idx in range(3)
+        ]
+        reaction_rows = [
+            {
+                "participant": 2,
+                "dataset": "main",
+                "trial": trial_idx + 1,
+                "reaction_time": 0.4 + trial_idx * 0.1,
+            }
+            for trial_idx in range(3)
+        ]
+
+        with self.assertRaisesRegex(ValueError, "look one-based"):
+            join_alpha_reaction_times(alpha_rows, reaction_rows)
+
     def test_extract_reaction_times_from_trialinfo_column(self):
         data = _synthetic_data(
             [
