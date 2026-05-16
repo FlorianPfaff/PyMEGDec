@@ -30,3 +30,4 @@ jobs:
           git add -A
           git commit -m "Fix train-class Procrustes target alignment"
           git push origin HEAD:codex/fix-procrustes-target-alignment
+# trigger: 1
