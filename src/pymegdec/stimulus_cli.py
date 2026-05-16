@@ -36,11 +36,14 @@ from pymegdec.stimulus_cross_subject import (
     DEFAULT_CROSS_SUBJECT_FEATURE_MODE,
     DEFAULT_CROSS_SUBJECT_NESTED_WINDOW_CENTERS,
     DEFAULT_CROSS_SUBJECT_NORMALIZATION,
+    DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION,
+    DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED,
     DEFAULT_CROSS_SUBJECT_PARTICIPANTS,
     DEFAULT_CROSS_SUBJECT_WINDOW_CENTER,
     DEFAULT_CROSS_SUBJECT_WINDOW_SIZE,
     NORMALIZATION_MODES,
     CrossSubjectStimulusConfig,
+    TRIAL_SELECTION_MODES,
     export_cross_subject_stimulus_smoke,
     export_nested_cross_subject_stimulus,
     make_cross_subject_candidate_configs,
@@ -276,6 +279,18 @@ def _build_cross_subject_smoke_parser(prog: str | None = None) -> argparse.Argum
         default=None,
         help="Optional deterministic cap on trials per stimulus class and participant for quick screening.",
     )
+    parser.add_argument(
+        "--trial-selection",
+        choices=TRIAL_SELECTION_MODES,
+        default=DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION,
+        help="Trial subset policy used when --max-trials-per-class-per-participant is set. 'random' samples a seeded subset; 'first' keeps legacy file-order trials.",
+    )
+    parser.add_argument(
+        "--trial-selection-seed",
+        type=int,
+        default=DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED,
+        help="Seed for random trial selection; ignored with --trial-selection first.",
+    )
     parser.add_argument("--chance-classes", type=int, default=DEFAULT_CROSS_SUBJECT_CHANCE_CLASSES, help="Number of stimulus classes used for chance level.")
     parser.add_argument("--random-state", type=int, default=0, help="Random state passed to the classifier.")
     parser.add_argument("--signflip-permutations", type=int, default=10000, help="Monte Carlo sign-flip permutations for the group summary.")
@@ -307,6 +322,8 @@ def stimulus_cross_subject_smoke(argv: Sequence[str] | None = None, prog: str | 
         classifier_param=parse_classifier_param(args.classifier_param),
         components_pca=args.components_pca,
         max_trials_per_class_per_participant=args.max_trials_per_class_per_participant,
+        trial_selection=args.trial_selection,
+        trial_selection_seed=args.trial_selection_seed,
         chance_classes=args.chance_classes,
         random_state=args.random_state,
         signflip_permutations=args.signflip_permutations,
@@ -592,6 +609,8 @@ def stimulus_cross_subject_nested(argv: Sequence[str] | None = None, prog: str |
         classifier_params=args.classifier_params,
         components_pca_values=args.components_pca_values,
         max_trials_per_class_per_participant=args.max_trials_per_class_per_participant,
+        trial_selection=args.trial_selection,
+        trial_selection_seed=args.trial_selection_seed,
         chance_classes=args.chance_classes,
         random_state=args.random_state,
         signflip_permutations=args.signflip_permutations,

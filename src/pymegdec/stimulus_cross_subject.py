@@ -10,10 +10,62 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 import sys
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from pymegdec import _stimulus_cross_subject_core as _core
+
+if TYPE_CHECKING:
+    from pymegdec._stimulus_cross_subject_core import (  # noqa: F401
+        ALIGNMENT_MODES,
+        CROSS_SUBJECT_PREDICTION_GROUP_COLUMNS,
+        DEFAULT_CROSS_SUBJECT_ALIGNMENT,
+        DEFAULT_CROSS_SUBJECT_BASELINE_WINDOW,
+        DEFAULT_CROSS_SUBJECT_CHANCE_CLASSES,
+        DEFAULT_CROSS_SUBJECT_CLASSIFIER,
+        DEFAULT_CROSS_SUBJECT_COMPONENTS_PCA,
+        DEFAULT_CROSS_SUBJECT_FEATURE_MODE,
+        DEFAULT_CROSS_SUBJECT_NESTED_WINDOW_CENTERS,
+        DEFAULT_CROSS_SUBJECT_NORMALIZATION,
+        DEFAULT_CROSS_SUBJECT_PARTICIPANTS,
+        DEFAULT_CROSS_SUBJECT_WINDOW_CENTER,
+        DEFAULT_CROSS_SUBJECT_WINDOW_SIZE,
+        FEATURE_MODES,
+        NORMALIZATION_MODES,
+        _align_training_features_by_subject,
+        _alignment_metadata,
+        _apply_channel_pattern_transform,
+        _apply_channel_procrustes_transform,
+        _baseline_channel_whitening_matrix,
+        _baseline_feature_statistics,
+        _centered_window,
+        _channel_procrustes_transform,
+        _common_label_values,
+        _extract_window_features,
+        _fit_channel_procrustes_transforms,
+        _fit_outer_fold_model,
+        _normalize_feature_mode,
+        _normalize_features,
+        _normalize_normalization,
+        _normalize_trial_cap,
+        _normalized_subject_features,
+        _participant_class_channel_patterns,
+        _ranked_label_metrics,
+        _training_labels,
+        _trial_signal,
+        _trialinfo_labels,
+        _true_label_ranks,
+        evaluate_cross_subject_stimulus_smoke,
+        evaluate_nested_cross_subject_stimulus,
+        export_cross_subject_stimulus_smoke,
+        export_nested_cross_subject_stimulus,
+        summarize_cross_subject_confusion_category_enrichment,
+        summarize_cross_subject_confusion_category_matrix,
+        summarize_cross_subject_confusion_pairs,
+        summarize_cross_subject_predictions,
+        summarize_nested_cross_subject_stimulus,
+    )
 
 DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION = "random"
 DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED = 0
@@ -334,8 +386,8 @@ def _normalize_trial_selection_seed(value):
 _core.DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION
 _core.DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED
 _core.TRIAL_SELECTION_MODES = TRIAL_SELECTION_MODES
-_core.CrossSubjectStimulusConfig = CrossSubjectStimulusConfig
-_core.ParticipantFeatureSet = ParticipantFeatureSet
+_core.CrossSubjectStimulusConfig = CrossSubjectStimulusConfig  # type: ignore[misc]
+_core.ParticipantFeatureSet = ParticipantFeatureSet  # type: ignore[misc]
 _core.make_cross_subject_candidate_configs = make_cross_subject_candidate_configs
 _core.load_participant_stimulus_features = load_participant_stimulus_features
 _core.summarize_cross_subject_stimulus_smoke = summarize_cross_subject_stimulus_smoke
@@ -348,7 +400,7 @@ _core._seed_field = _seed_field  # pylint: disable=protected-access
 _core._normalized_config = _normalized_config  # pylint: disable=protected-access
 _core._normalize_trial_selection = _normalize_trial_selection  # pylint: disable=protected-access
 _core._normalize_trial_selection_seed = _normalize_trial_selection_seed  # pylint: disable=protected-access
-_core.CROSS_SUBJECT_PREDICTION_GROUP_COLUMNS = (
+_core.CROSS_SUBJECT_PREDICTION_GROUP_COLUMNS = (  # type: ignore[assignment]
     *_core.CROSS_SUBJECT_PREDICTION_GROUP_COLUMNS,
     "trial_selection",
     "trial_selection_seed",

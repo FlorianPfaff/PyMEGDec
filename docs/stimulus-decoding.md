@@ -79,10 +79,13 @@ pymegdec stimulus cross-subject-nested \
   --max-trials-per-class-per-participant 10
 ```
 
-The trial cap is a deterministic screening option: it keeps the first `N`
-trials of each stimulus class for each participant, preserving nested LOSO
-while making candidate selection fast enough to iterate. Omit
-`--max-trials-per-class-per-participant` for the final all-trial benchmark.
+The trial cap is a deterministic screening option: by default it draws a seeded
+random subset of `N` trials from each stimulus class for each participant,
+preserving nested LOSO while avoiding a file-order or block-order bias in fast
+candidate-selection runs. Use `--trial-selection-seed` to reproduce a screening
+subset, and use `--trial-selection first` only when you intentionally need the
+legacy first-trials-per-class behavior. Omit `--max-trials-per-class-per-participant`
+for the final all-trial benchmark.
 In the manual GitHub Actions workflow, set `benchmark_preset` to
 `final-all-trials` for the final run. That preset ignores the trial-cap input,
 does not pass `--max-trials-per-class-per-participant`, and writes outputs with

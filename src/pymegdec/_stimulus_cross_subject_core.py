@@ -47,7 +47,11 @@ DEFAULT_CROSS_SUBJECT_CLASSIFIER = "multiclass-svm"
 DEFAULT_CROSS_SUBJECT_COMPONENTS_PCA = 64
 DEFAULT_CROSS_SUBJECT_NESTED_WINDOW_CENTERS = (0.150, 0.175, 0.200)
 DEFAULT_CROSS_SUBJECT_SELECTION_METRIC = "balanced_accuracy"
+DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION = "random"
 FEATURE_MODES = ("sensor_mean", "sensor_flat")
+DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION = "random"
+DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED = 0
+TRIAL_SELECTION_MODES = ("random", "first")
 NORMALIZATION_MODES = ("none", "subject_z", "subject_trial_z", "subject_baseline_z", "subject_baseline_whiten")
 ALIGNMENT_MODES = ("none", "train_class_procrustes")
 BASELINE_WHITENING_SHRINKAGE = 0.1
@@ -69,6 +73,8 @@ CROSS_SUBJECT_PREDICTION_GROUP_COLUMNS = (
     "classifier",
     "components_pca",
     "max_trials_per_class_per_participant",
+    "trial_selection",
+    "trial_selection_seed",
     "label_shuffle_control",
     "label_shuffle_seed",
 )
@@ -89,6 +95,8 @@ class CrossSubjectStimulusConfig:  # pylint: disable=too-many-instance-attribute
     classifier_param: object = float("nan")
     components_pca: int | float = DEFAULT_CROSS_SUBJECT_COMPONENTS_PCA
     max_trials_per_class_per_participant: int | None = None
+    trial_selection: str = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION
+    trial_selection_seed: int | None = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED
     chance_classes: int = DEFAULT_CROSS_SUBJECT_CHANCE_CLASSES
     random_state: int | None = 0
     signflip_permutations: int = 10_000
@@ -111,6 +119,9 @@ class ParticipantFeatureSet:
     n_window_samples: int
     n_baseline_samples: int
     max_trials_per_class_per_participant: int | None
+    trial_indices: np.ndarray | None = None
+    trial_selection: str = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION
+    trial_selection_seed: int | None = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED
 
 
 def evaluate_cross_subject_stimulus_smoke(data_folder, participants, *, config=None, progress=None):
@@ -232,6 +243,8 @@ def make_cross_subject_candidate_configs(  # pylint: disable=too-many-arguments
     classifier_params=(float("nan"),),
     components_pca_values=(DEFAULT_CROSS_SUBJECT_COMPONENTS_PCA,),
     max_trials_per_class_per_participant=None,
+    trial_selection=DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION,
+    trial_selection_seed=DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED,
     chance_classes=DEFAULT_CROSS_SUBJECT_CHANCE_CLASSES,
     random_state=0,
     signflip_permutations=10_000,
@@ -251,6 +264,8 @@ def make_cross_subject_candidate_configs(  # pylint: disable=too-many-arguments
             classifier_param=classifier_param,
             components_pca=components_pca,
             max_trials_per_class_per_participant=max_trials_per_class_per_participant,
+            trial_selection=trial_selection,
+            trial_selection_seed=trial_selection_seed,
             chance_classes=chance_classes,
             random_state=random_state,
             signflip_permutations=signflip_permutations,
@@ -275,7 +290,13 @@ def load_participant_stimulus_features(data_folder, participant, *, config=None)
     data_path = Path(resolve_data_folder(data_folder)) / f"Part{int(participant)}Data.mat"
     data = sio.loadmat(data_path)["data"][0]
     all_labels = _trialinfo_labels(data)
-    trial_indices = _selected_trial_indices(all_labels, config.max_trials_per_class_per_participant)
+    trial_indices = _selected_trial_indices(
+        all_labels,
+        config.max_trials_per_class_per_participant,
+        selection=config.trial_selection,
+        seed=config.trial_selection_seed,
+        participant=participant,
+    )
     labels = all_labels[trial_indices]
     features, n_window_samples = _extract_window_features(
         data,
@@ -308,6 +329,9 @@ def load_participant_stimulus_features(data_folder, participant, *, config=None)
         n_window_samples=int(n_window_samples),
         n_baseline_samples=int(n_baseline_samples),
         max_trials_per_class_per_participant=config.max_trials_per_class_per_participant,
+        trial_indices=np.asarray(trial_indices, dtype=int),
+        trial_selection=config.trial_selection,
+        trial_selection_seed=config.trial_selection_seed,
     )
 
 
@@ -349,6 +373,8 @@ def summarize_cross_subject_stimulus_smoke(outer_rows, *, config=None):
             "classifier": config.classifier,
             "components_pca": config.components_pca,
             "max_trials_per_class_per_participant": config.max_trials_per_class_per_participant,
+            "trial_selection": config.trial_selection,
+            "trial_selection_seed": _seed_field(config.trial_selection_seed),
             "chance_accuracy": chance,
             "chance_percent": 100.0 * chance,
             "accuracy_mean": float(np.mean(raw)),
@@ -410,6 +436,8 @@ def summarize_nested_cross_subject_stimulus(outer_rows, *, signflip_permutations
     alignment_counts = _row_value_counts(outer_rows, "selected_alignment", fallback_key="alignment")
     components_pca_counts = _row_value_counts(outer_rows, "selected_components_pca", fallback_key="components_pca")
     trial_cap_counts = Counter(str(row["max_trials_per_class_per_participant"]) for row in outer_rows)
+    trial_selection_counts = _row_value_counts(outer_rows, "selected_trial_selection", fallback_key="trial_selection")
+    trial_selection_seed = _single_row_value(outer_rows, "trial_selection_seed", default="")
     winner_margins = _finite_metric_values(outer_rows, "selected_inner_winner_margin")
     label_shuffle_control = _single_row_value(outer_rows, "label_shuffle_control", default=False)
     label_shuffle_seed = _single_row_value(outer_rows, "label_shuffle_seed", default="")
@@ -430,6 +458,8 @@ def summarize_nested_cross_subject_stimulus(outer_rows, *, signflip_permutations
             "selected_alignment_counts": _format_counter(alignment_counts),
             "selected_components_pca_counts": _format_counter(components_pca_counts),
             "max_trials_per_class_per_participant_counts": _format_counter(trial_cap_counts),
+            "trial_selection_counts": _format_counter(trial_selection_counts),
+            "trial_selection_seed": trial_selection_seed,
             "inner_winner_margin_mean": _nanmean_or_nan(winner_margins),
             "inner_winner_margin_median": _nanmedian_or_nan(winner_margins),
             "inner_winner_margin_min": _nanmin_or_nan(winner_margins),
@@ -1072,6 +1102,8 @@ def _feature_cache_key(config):
         str(config.feature_mode),
         str(config.normalization),
         config.max_trials_per_class_per_participant,
+        str(config.trial_selection),
+        _seed_field(config.trial_selection_seed),
     )
 
 
@@ -1136,6 +1168,8 @@ def _select_nested_candidate(inner_rows):
                 "selected_classifier_param": example["classifier_param"],
                 "selected_components_pca": example["components_pca"],
                 "selected_max_trials_per_class_per_participant": example["max_trials_per_class_per_participant"],
+                "selected_trial_selection": example["trial_selection"],
+                "selected_trial_selection_seed": example.get("trial_selection_seed", ""),
                 "label_shuffle_control": example.get("label_shuffle_control", False),
                 "label_shuffle_seed": example.get("label_shuffle_seed", ""),
             }
@@ -1296,6 +1330,8 @@ def _score_outer_fold_model(fitted_model, test_set, config, *, include_predictio
         "classifier_param": fitted_model["classifier_param"],
         "components_pca": config.components_pca,
         "max_trials_per_class_per_participant": config.max_trials_per_class_per_participant,
+        "trial_selection": config.trial_selection,
+        "trial_selection_seed": _seed_field(config.trial_selection_seed),
         "actual_components_pca": model_bundle.actual_components_pca,
         "pca_explained_variance_percent": model_bundle.explained_variance_percent,
         "n_channels": test_set.n_channels,
@@ -1321,8 +1357,9 @@ def _score_outer_fold_model(fitted_model, test_set, config, *, include_predictio
 
 def _prediction_rows(test_set, test_labels, predictions, true_label_ranks, *, config, actual_components_pca):
     train_window = _centered_window(config.window_center, config.window_size)
+    trial_indices = _feature_set_trial_indices(test_set)
     rows = []
-    for trial_idx, (true_label, predicted_label, true_label_rank) in enumerate(zip(test_labels, predictions, true_label_ranks)):
+    for trial_idx, true_label, predicted_label, true_label_rank in zip(trial_indices, test_labels, predictions, true_label_ranks):
         true_stimulus = int(true_label) + 1
         predicted_stimulus = int(predicted_label) + 1
         rows.append(
@@ -1338,6 +1375,8 @@ def _prediction_rows(test_set, test_labels, predictions, true_label_ranks, *, co
                 "classifier": config.classifier,
                 "components_pca": config.components_pca,
                 "max_trials_per_class_per_participant": config.max_trials_per_class_per_participant,
+                "trial_selection": config.trial_selection,
+                "trial_selection_seed": _seed_field(config.trial_selection_seed),
                 "actual_components_pca": actual_components_pca,
                 "trial": int(trial_idx),
                 "test_trial_index": int(trial_idx),
@@ -1497,21 +1536,58 @@ def _whitening_matrix(covariance):
     return 0.5 * (whitening + whitening.T)
 
 
-def _selected_trial_indices(labels, max_trials_per_class):
+def _selected_trial_indices(
+    labels,
+    max_trials_per_class,
+    *,
+    selection=DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION,
+    seed=DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED,
+    participant=None,
+):
     labels = np.asarray(labels).ravel()
     if max_trials_per_class is None:
         return np.arange(labels.shape[0], dtype=int)
     max_trials_per_class = int(max_trials_per_class)
     if max_trials_per_class <= 0:
         raise ValueError("max_trials_per_class_per_participant must be positive.")
+    selection = _normalize_trial_selection(selection)
 
-    selected = []
-    counts: Counter[int] = Counter()
-    for index, label in enumerate(labels):
-        if counts[int(label)] < max_trials_per_class:
-            selected.append(index)
-            counts[int(label)] += 1
-    return np.asarray(selected, dtype=int)
+    if selection == "first":
+        selected = []
+        counts: Counter[int] = Counter()
+        for index, label in enumerate(labels):
+            if counts[int(label)] < max_trials_per_class:
+                selected.append(index)
+                counts[int(label)] += 1
+        return np.asarray(selected, dtype=int)
+
+    if selection == "random":
+        rng = _trial_selection_rng(seed, participant)
+        selected = []
+        for label in np.unique(labels):
+            class_indices = np.flatnonzero(labels == label)
+            if class_indices.size > max_trials_per_class:
+                class_indices = rng.choice(class_indices, size=max_trials_per_class, replace=False)
+            selected.extend(int(index) for index in class_indices)
+        return np.asarray(sorted(selected), dtype=int)
+
+    raise ValueError(f"Unsupported trial selection policy: {selection}")
+
+
+def _trial_selection_rng(seed, participant):
+    if seed is None:
+        return np.random.default_rng()
+    seed_values = [int(seed)]
+    if participant is not None:
+        seed_values.append(int(participant))
+    return np.random.default_rng(np.random.SeedSequence(seed_values))
+
+
+def _feature_set_trial_indices(feature_set):
+    trial_indices = getattr(feature_set, "trial_indices", None)
+    if trial_indices is None:
+        return np.arange(np.asarray(feature_set.labels).shape[0], dtype=int)
+    return np.asarray(trial_indices, dtype=int).ravel()
 
 
 def _iter_trial_indices(data, trial_indices):
@@ -1800,6 +1876,10 @@ def _one_sided_signflip_p_value(differences, *, n_permutations, seed):
     return float((np.sum(null_means >= observed) + 1) / (int(n_permutations) + 1))
 
 
+def _seed_field(seed):
+    return "" if seed is None else int(seed)
+
+
 def _normalized_config(config):
     return CrossSubjectStimulusConfig(
         window_center=config.window_center,
@@ -1812,6 +1892,12 @@ def _normalized_config(config):
         classifier_param=config.classifier_param,
         components_pca=config.components_pca,
         max_trials_per_class_per_participant=_normalize_trial_cap(config.max_trials_per_class_per_participant),
+        trial_selection=_normalize_trial_selection(
+            getattr(config, "trial_selection", DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION)
+        ),
+        trial_selection_seed=_normalize_trial_selection_seed(
+            getattr(config, "trial_selection_seed", DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED)
+        ),
         chance_classes=config.chance_classes,
         random_state=config.random_state,
         signflip_permutations=config.signflip_permutations,
@@ -1835,6 +1921,22 @@ def _normalize_trial_cap(value):
     value = int(value)
     if value <= 0:
         raise ValueError("max_trials_per_class_per_participant must be positive.")
+    return value
+
+
+def _normalize_trial_selection(value):
+    normalized = str(value).strip().lower().replace("-", "_")
+    if normalized not in TRIAL_SELECTION_MODES:
+        raise ValueError(f"trial_selection must be one of {TRIAL_SELECTION_MODES}.")
+    return normalized
+
+
+def _normalize_trial_selection_seed(value):
+    if value is None or value == "":
+        return None
+    value = int(value)
+    if value < 0:
+        raise ValueError("trial_selection_seed must be non-negative or None.")
     return value
 
 

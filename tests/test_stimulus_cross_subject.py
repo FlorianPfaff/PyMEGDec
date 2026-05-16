@@ -169,6 +169,7 @@ class TestStimulusCrossSubject(unittest.TestCase):
             normalization="none",
             components_pca=float("inf"),
             max_trials_per_class_per_participant=2,
+            trial_selection="first",
             chance_classes=2,
         )
 
@@ -178,6 +179,54 @@ class TestStimulusCrossSubject(unittest.TestCase):
         self.assertEqual(feature_set.labels.tolist(), [1, 2, 1, 2])
         self.assertEqual(feature_set.features.shape[0], 4)
         self.assertEqual(feature_set.max_trials_per_class_per_participant, 2)
+
+    def test_trial_cap_random_selection_is_seeded_and_not_file_order(self):
+        labels = np.asarray([1, 2, 1, 2, 1, 2], dtype=int)
+
+        selected = cross_subject._selected_trial_indices(  # pylint: disable=protected-access
+            labels,
+            2,
+            selection="random",
+            seed=0,
+            participant=1,
+        )
+        repeated = cross_subject._selected_trial_indices(  # pylint: disable=protected-access
+            labels,
+            2,
+            selection="random",
+            seed=0,
+            participant=1,
+        )
+        legacy = cross_subject._selected_trial_indices(  # pylint: disable=protected-access
+            labels,
+            2,
+            selection="first",
+            seed=0,
+            participant=1,
+        )
+
+        self.assertEqual(selected.tolist(), [1, 2, 3, 4])
+        self.assertEqual(repeated.tolist(), selected.tolist())
+        self.assertEqual(legacy.tolist(), [0, 1, 2, 3])
+
+    def test_random_trial_cap_preserves_original_trial_indices(self):
+        data_by_participant = {1: _mat_data([1, 2, 1, 2, 1, 2], [-1.0, 1.0, -0.9, 0.9, -0.8, 0.8])}
+        config = CrossSubjectStimulusConfig(
+            window_center=0.2,
+            window_size=0.1,
+            normalization="none",
+            components_pca=float("inf"),
+            max_trials_per_class_per_participant=2,
+            trial_selection="random",
+            trial_selection_seed=0,
+            chance_classes=2,
+        )
+
+        with patch("pymegdec.stimulus_cross_subject.sio.loadmat", side_effect=_loadmat_side_effect(data_by_participant)):
+            feature_set = load_participant_stimulus_features("unused", 1, config=config)
+
+        self.assertEqual(feature_set.trial_indices.tolist(), [1, 2, 3, 4])
+        self.assertEqual(feature_set.labels.tolist(), [2, 1, 2, 1])
 
     def test_evaluate_cross_subject_stimulus_smoke(self):
         data_by_participant = {
