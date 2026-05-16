@@ -93,6 +93,64 @@ class TestAlphaMovement(unittest.TestCase):
         self.assertEqual(labels, {"1", "2"})
         self.assertTrue(all(row["n_trials"] == 1 for row in summary_rows))
 
+    def test_summarize_alpha_movement_reports_mean_trajectory_movement(self):
+        def trajectory_row(trial, time_s, centroid_x_mm):
+            displacement = abs(centroid_x_mm)
+            speed = np.nan if time_s == 0.0 else displacement
+            return {
+                "participant": "p1",
+                "dataset": "main",
+                "trial": trial,
+                "trial_label": 1,
+                "time_s": time_s,
+                "mean_alpha_power": 1.0,
+                "spatial_concentration": 0.5,
+                "centroid_x_mm": centroid_x_mm,
+                "centroid_y_mm": 0.0,
+                "centroid_z_mm": 0.0,
+                "projected_x_mm": centroid_x_mm,
+                "projected_y_mm": 0.0,
+                "displacement_mm": displacement,
+                "projected_displacement_mm": displacement,
+                "speed_mm_per_s": speed,
+                "projected_speed_mm_per_s": speed,
+            }
+
+        rows = [
+            trajectory_row(0, 0.0, 0.0),
+            trajectory_row(0, 1.0, 10.0),
+            trajectory_row(1, 0.0, 0.0),
+            trajectory_row(1, 1.0, -10.0),
+        ]
+
+        summary_rows = summarize_alpha_movement(rows)
+
+        summary_by_time = {row["time_s"]: row for row in summary_rows}
+        later = summary_by_time[1.0]
+        self.assertEqual(later["n_trials"], 2)
+        self.assertEqual(later["centroid_x_mm"], 0.0)
+        self.assertEqual(later["projected_x_mm"], 0.0)
+        self.assertEqual(later["mean_trajectory_displacement_mm"], 0.0)
+        self.assertEqual(later["mean_trajectory_projected_displacement_mm"], 0.0)
+        self.assertEqual(later["mean_trajectory_speed_mm_per_s"], 0.0)
+        self.assertEqual(later["mean_trajectory_projected_speed_mm_per_s"], 0.0)
+        self.assertTrue(np.isnan(later["mean_trajectory_projected_direction_rad"]))
+        self.assertEqual(later["displacement_mm"], later["mean_trajectory_displacement_mm"])
+        self.assertEqual(
+            later["projected_displacement_mm"],
+            later["mean_trajectory_projected_displacement_mm"],
+        )
+        self.assertEqual(later["speed_mm_per_s"], later["mean_trajectory_speed_mm_per_s"])
+        self.assertEqual(
+            later["projected_speed_mm_per_s"],
+            later["mean_trajectory_projected_speed_mm_per_s"],
+        )
+        self.assertTrue(np.isnan(later["projected_direction_rad"]))
+        self.assertEqual(later["mean_trial_displacement_mm"], 10.0)
+        self.assertEqual(later["mean_trial_projected_displacement_mm"], 10.0)
+        self.assertEqual(later["mean_trial_speed_mm_per_s"], 10.0)
+        self.assertEqual(later["mean_trial_projected_speed_mm_per_s"], 10.0)
+
     def test_write_alpha_movement_csv(self):
         rows = compute_alpha_movement(self.data, participant_id=2, config=self.config)
 
