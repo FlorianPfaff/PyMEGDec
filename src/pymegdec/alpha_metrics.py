@@ -434,6 +434,39 @@ def _time_mask(time_vector, time_window):
     return mask
 
 
+def uniform_sample_interval(time_vector):
+    """Return the sample interval after validating a regular finite time axis."""
+
+    time_vector = np.asarray(time_vector, dtype=float).ravel()
+    if time_vector.size < 2:
+        raise ValueError("time_vector must contain at least two samples.")
+    if not np.all(np.isfinite(time_vector)):
+        raise ValueError("time_vector must contain only finite values.")
+
+    diffs = np.diff(time_vector)
+    if np.any(diffs <= 0):
+        raise ValueError("time_vector must be strictly increasing.")
+
+    sample_interval = float(np.median(diffs))
+    if not np.allclose(diffs, sample_interval, rtol=1e-6, atol=1e-12):
+        raise ValueError("time_vector must be uniformly sampled.")
+    return sample_interval
+
+
+def _validate_alpha_signal_time_axis(signal, time_vector):
+    signal = np.asarray(signal, dtype=float)
+    time_vector = np.asarray(time_vector, dtype=float).ravel()
+    if signal.ndim == 0:
+        raise ValueError("signal must have at least one time dimension.")
+    if signal.shape[-1] != time_vector.size:
+        raise ValueError(
+            f"signal has {signal.shape[-1]} samples along its last axis but time_vector has "
+            f"{time_vector.size} entries."
+        )
+    sample_interval = uniform_sample_interval(time_vector)
+    return signal, time_vector, sample_interval
+
+
 def _phase_gradient_metrics(phase, edge_indices, edge_vectors, edge_pinv, center_frequency):
     phase_delta = np.angle(np.exp(1j * (phase[edge_indices[:, 1], :] - phase[edge_indices[:, 0], :])))
     gradients = edge_pinv @ phase_delta
@@ -472,7 +505,8 @@ def _resolve_channel_indices(data, channel_indices, config):
 def compute_alpha_analytic_window(signal, time_vector, config):
     """Return alpha-band analytic signal samples in ``config.time_window``."""
 
-    sampling_rate = 1 / np.diff(time_vector[:2])[0]
+    signal, time_vector, sample_interval = _validate_alpha_signal_time_axis(signal, time_vector)
+    sampling_rate = float(1 / sample_interval)
     time_indices = np.flatnonzero(_time_mask(time_vector, config.time_window))
     low_freq, high_freq = config.frequency_range
 
