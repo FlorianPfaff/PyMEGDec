@@ -1,7 +1,7 @@
 import numpy as np
 
+from pymegdec import _stimulus_hyperalignment_legacy as hyperalignment_legacy
 from pymegdec import stimulus_cross_subject as cross_subject
-from pymegdec import stimulus_hyperalignment as hyperalignment
 
 
 def test_cross_subject_topk_metrics_count_unscoreable_true_labels_as_failures():
@@ -38,7 +38,44 @@ def test_cross_subject_topk_metrics_without_score_columns_are_undefined():
     assert np.isnan(metrics["median_true_label_rank"])
 
 
-def test_hyperalignment_topk_metrics_count_unscoreable_true_labels_as_failures():
+def test_hyperalignment_legacy_topk_metrics_count_unscoreable_true_labels_as_failures():
+    metrics = hyperalignment_legacy._topk_and_rank_metrics(
+        np.asarray([0, 1, 2]),
+        np.asarray(
+            [
+                [0.9, 0.1],
+                [0.2, 0.8],
+                [0.7, 0.3],
+            ]
+        ),
+        np.asarray([0, 1]),
+    )
+
+    assert metrics["top2_accuracy"] == 2 / 3
+    assert metrics["top3_accuracy"] == 2 / 3
+    assert metrics["mean_true_label_rank"] == 1.0
+
+
+def test_hyperalignment_legacy_topk_metrics_count_all_unscoreable_true_labels_as_failures():
+    metrics = hyperalignment_legacy._topk_and_rank_metrics(
+        np.asarray([2, 3]),
+        np.asarray(
+            [
+                [0.9, 0.1],
+                [0.2, 0.8],
+            ]
+        ),
+        np.asarray([0, 1]),
+    )
+
+    assert metrics["top2_accuracy"] == 0.0
+    assert metrics["top3_accuracy"] == 0.0
+    assert np.isnan(metrics["mean_true_label_rank"])
+
+
+def test_hyperalignment_public_topk_metrics_count_unscoreable_true_labels_as_failures():
+    from pymegdec import stimulus_hyperalignment as hyperalignment
+
     metrics = hyperalignment._topk_and_rank_metrics(
         np.asarray([0, 1, 2]),
         np.asarray(
