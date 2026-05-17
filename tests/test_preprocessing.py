@@ -52,6 +52,24 @@ class TestPreprocessing(unittest.TestCase):
             np.testing.assert_allclose(downsampled["time"][0][0][index], [[0.0, 0.5, 1.0]])
             self.assertEqual(downsampled["trial"][0][0][index].shape, (2, 3))
 
+    def test_downsample_preserves_signal_values_without_implicit_detrending(self):
+        time = np.array([[0.0, 0.25, 0.5, 0.75, 1.0]])
+        trial = np.array(
+            [
+                [1.0, 2.0, 3.0, 4.0, 5.0],
+                [10.0, 12.0, 14.0, 16.0, 18.0],
+            ]
+        )
+        data = _data([trial.copy()], [time.copy()])
+
+        downsampled = downsample_data(data, 2)
+
+        np.testing.assert_allclose(downsampled["time"][0][0][0], [[0.0, 0.5, 1.0]])
+        np.testing.assert_allclose(
+            downsampled["trial"][0][0][0],
+            [[1.0, 3.0, 5.0], [10.0, 14.0, 18.0]],
+        )
+
     def test_downsample_does_not_mutate_scipy_loaded_struct_arrays(self):
         time = np.array([[0.0, 0.25, 0.5, 0.75, 1.0]])
         trial = np.array([[0, 1, 0, -1, 0], [2, 3, 2, 1, 2]], dtype=float)
