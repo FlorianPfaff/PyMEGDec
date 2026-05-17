@@ -23,11 +23,10 @@ DEFAULT_ONSET_THRESHOLD_METHOD = _core.DEFAULT_ONSET_THRESHOLD_METHOD
 DEFAULT_ONSET_MIN_CONSECUTIVE = _core.DEFAULT_ONSET_MIN_CONSECUTIVE
 DEFAULT_ONSET_MIN_DURATION = _core.DEFAULT_ONSET_MIN_DURATION
 DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION = _core.DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION
+ONSET_SCORE_TYPE_PREDICTED_CLASS = "predicted_class_score"
 window_centers_from_range = _core.window_centers_from_range
 summarize_stimulus_decoding_peaks = _core.summarize_stimulus_decoding_peaks
 summarize_stimulus_prediction_diagnostics = _core.summarize_stimulus_prediction_diagnostics
-summarize_stimulus_onset_scan = _core.summarize_stimulus_onset_scan
-summarize_stimulus_onset_events = _core.summarize_stimulus_onset_events
 write_stimulus_decoding_plots = _core.write_stimulus_decoding_plots
 
 
@@ -155,6 +154,8 @@ def evaluate_participant_stimulus_onset_scan(
         require_stable_prediction=require_stable_prediction,
         detection_start_s=detection_start_s,
     )
+    scan_rows = _patch_onset_score_columns(scan_rows)
+    event_rows = _patch_onset_event_score_columns(event_rows)
     return (_patch_auto_chance(scan_rows) if auto_chance else scan_rows), event_rows
 
 
@@ -352,6 +353,167 @@ def _patch_auto_chance(rows):
     return patched_rows
 
 
+def _patch_onset_score_columns(rows):
+    """Add explicit onset-score semantics while preserving legacy columns."""
+
+    patched_rows = []
+    for row in rows:
+        patched = dict(row)
+        legacy_score = _to_float(patched.get("stimulus_score"))
+        predicted_score = _to_float(patched.get("predicted_class_score", legacy_score))
+        correct = bool(patched.get("correct", False))
+        true_score = _to_float(patched.get("true_class_score", predicted_score if correct else _np.nan))
+        score_margin = _to_float(patched.get("score_margin", _np.nan))
+        onset_score = _to_float(patched.get("onset_score", predicted_score))
+        patched["predicted_class_score"] = predicted_score
+        patched["true_class_score"] = true_score
+        patched["score_margin"] = score_margin
+        patched["onset_score"] = onset_score
+        patched["onset_score_type"] = patched.get("onset_score_type") or ONSET_SCORE_TYPE_PREDICTED_CLASS
+        patched["stimulus_score"] = legacy_score if _np.isfinite(legacy_score) else onset_score
+        patched_rows.append(patched)
+    return patched_rows
+
+
+def _patch_onset_event_score_columns(rows):
+    """Add explicit score semantics to first-threshold-crossing event rows."""
+
+    patched_rows = []
+    for row in rows:
+        patched = dict(row)
+        detection_score = _to_float(patched.get("stimulus_score_at_detection"))
+        predicted_score = _to_float(patched.get("predicted_class_score_at_detection", detection_score))
+        correct = bool(patched.get("correct_detected_stimulus", False))
+        true_score = _to_float(patched.get("true_class_score_at_detection", predicted_score if correct else _np.nan))
+        patched["onset_score_at_detection"] = _to_float(patched.get("onset_score_at_detection", predicted_score))
+        patched["onset_score_type"] = patched.get("onset_score_type") or ONSET_SCORE_TYPE_PREDICTED_CLASS
+        patched["predicted_class_score_at_detection"] = predicted_score
+        patched["true_class_score_at_detection"] = true_score
+        patched["score_margin_at_detection"] = _to_float(patched.get("score_margin_at_detection", _np.nan))
+        patched_rows.append(patched)
+    return patched_rows
+
+
+def summarize_stimulus_onset_scan(rows):
+    """Summarize onset-blind scan rows with explicit onset-score semantics."""
+
+    patched_rows = _patch_onset_score_columns(rows)
+    summary_rows = _core.summarize_stimulus_onset_scan(patched_rows)
+    grouped = _group_rows_for_onset_scan_summary(patched_rows)
+    for summary_row in summary_rows:
+        group_rows = grouped.get(_onset_scan_summary_key(summary_row), [])
+        if not group_rows:
+            continue
+        onset_scores = _finite_values(row.get("onset_score") for row in group_rows)
+        predicted_scores = _finite_values(row.get("predicted_class_score") for row in group_rows)
+        true_scores = _finite_values(row.get("true_class_score") for row in group_rows)
+        margins = _finite_values(row.get("score_margin") for row in group_rows)
+        summary_row.update(
+            {
+                "onset_score_type": group_rows[0].get("onset_score_type", ONSET_SCORE_TYPE_PREDICTED_CLASS),
+                "mean_onset_score": _mean_or_nan(onset_scores),
+                "median_onset_score": _median_or_nan(onset_scores),
+                "mean_predicted_class_score": _mean_or_nan(predicted_scores),
+                "median_predicted_class_score": _median_or_nan(predicted_scores),
+                "mean_true_class_score": _mean_or_nan(true_scores),
+                "median_true_class_score": _median_or_nan(true_scores),
+                "mean_score_margin": _mean_or_nan(margins),
+                "median_score_margin": _median_or_nan(margins),
+            }
+        )
+    return summary_rows
+
+
+def summarize_stimulus_onset_events(rows):
+    """Summarize first-detection event rows with explicit onset-score semantics."""
+
+    patched_rows = _patch_onset_event_score_columns(rows)
+    summary_rows = _core.summarize_stimulus_onset_events(patched_rows)
+    grouped = _group_rows_for_onset_event_summary(patched_rows)
+    for summary_row in summary_rows:
+        group_rows = grouped.get(_onset_event_summary_key(summary_row), [])
+        if not group_rows:
+            continue
+        detection_scores = _finite_values(row.get("onset_score_at_detection") for row in group_rows)
+        predicted_scores = _finite_values(row.get("predicted_class_score_at_detection") for row in group_rows)
+        true_scores = _finite_values(row.get("true_class_score_at_detection") for row in group_rows)
+        summary_row.update(
+            {
+                "onset_score_type": group_rows[0].get("onset_score_type", ONSET_SCORE_TYPE_PREDICTED_CLASS),
+                "onset_score_at_detection_mean": _mean_or_nan(detection_scores),
+                "predicted_class_score_at_detection_mean": _mean_or_nan(predicted_scores),
+                "true_class_score_at_detection_mean": _mean_or_nan(true_scores),
+            }
+        )
+    return summary_rows
+
+
+def _group_rows_for_onset_scan_summary(rows):
+    grouped = {}
+    for row in rows:
+        grouped.setdefault(_onset_scan_summary_key(row), []).append(row)
+    return grouped
+
+
+def _group_rows_for_onset_event_summary(rows):
+    grouped = {}
+    for row in rows:
+        grouped.setdefault(_onset_event_summary_key(row), []).append(row)
+    return grouped
+
+
+def _onset_scan_summary_key(row):
+    return (
+        row.get("participant"),
+        row.get("variant"),
+        row.get("transfer_direction"),
+        row.get("train_window_center_s"),
+        row.get("threshold_method"),
+        row.get("min_consecutive"),
+        row.get("min_duration_s"),
+        row.get("require_stable_prediction"),
+        row.get("scan_window_center_s"),
+        row.get("classifier"),
+        row.get("components_pca"),
+        row.get("frequency_low_hz"),
+        row.get("frequency_high_hz"),
+    )
+
+
+def _onset_event_summary_key(row):
+    return (
+        row.get("participant"),
+        row.get("variant"),
+        row.get("transfer_direction"),
+        row.get("train_window_center_s"),
+        row.get("threshold_method"),
+        row.get("min_consecutive"),
+        row.get("min_duration_s"),
+        row.get("require_stable_prediction"),
+        row.get("classifier"),
+        row.get("components_pca"),
+        row.get("frequency_low_hz"),
+        row.get("frequency_high_hz"),
+    )
+
+
+def _finite_values(values):
+    finite = []
+    for value in values:
+        parsed = _to_float(value)
+        if _np.isfinite(parsed):
+            finite.append(parsed)
+    return finite
+
+
+def _mean_or_nan(values):
+    return float(_np.mean(values)) if values else _np.nan
+
+
+def _median_or_nan(values):
+    return float(_np.median(values)) if values else _np.nan
+
+
 def _row_validation_class_count(row, true_label_class_counts):
     class_count = _positive_int(row.get("n_validation_classes"))
     if class_count is not None:
@@ -489,6 +651,8 @@ def _core_evaluate_participant_stimulus_onset_scan(
         require_stable_prediction=require_stable_prediction,
         detection_start_s=detection_start_s,
     )
+    scan_rows = _patch_onset_score_columns(scan_rows)
+    event_rows = _patch_onset_event_score_columns(event_rows)
     return (_patch_auto_chance(scan_rows) if auto_chance else scan_rows), event_rows
 
 
