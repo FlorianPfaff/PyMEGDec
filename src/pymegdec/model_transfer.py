@@ -12,6 +12,10 @@ from pymegdec.preprocessing import preprocess_features
 from reptrace.decoding.transfer import evaluate_feature_transfer
 
 
+def _trialinfo_labels(data):
+    return np.array(data["trialinfo"][0][0], dtype=int, copy=True).ravel()
+
+
 # jscpd:ignore-start
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments,too-many-locals
 def evaluate_model_transfer(
@@ -38,8 +42,8 @@ def evaluate_model_transfer(
     train_exp_data = sio.loadmat(f"{data_folder}/Part{parts}Data.mat")["data"][0]
     val_exp_data = sio.loadmat(f"{data_folder}/Part{parts}CueData.mat")["data"][0]
 
-    labels_train_exp = np.array(train_exp_data["trialinfo"][0][0], copy=True)
-    labels_val_exp = np.array(val_exp_data["trialinfo"][0][0], copy=True)
+    labels_train_exp = _trialinfo_labels(train_exp_data)
+    labels_val_exp = _trialinfo_labels(val_exp_data)
     if np.isnan(null_window_center):
         # There is no null data in the validation experiment, and some
         # classifiers do not support labels starting above 0.
