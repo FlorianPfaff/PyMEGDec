@@ -60,9 +60,6 @@ from pymegdec.stimulus_decoding import (
     summarize_stimulus_prediction_diagnostics,
     summarize_stimulus_temporal_generalization,
 )
-from pymegdec._alpha_movement_common_projection import apply_alpha_movement_common_projection
-
-apply_alpha_movement_common_projection()
 
 __version__ = "0.1.0"
 
