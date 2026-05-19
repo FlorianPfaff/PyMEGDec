@@ -35,11 +35,11 @@ from reptrace.decoding.windowed import fit_window_model as fit_reptrace_window_m
 from reptrace.decoding.windowed import (
     predict_window_model as predict_reptrace_window_model,
 )
+from reptrace.epoched_onset_scan import run_epoched_onset_scan
 from reptrace.metrics.confusion import (  # pylint: disable=no-name-in-module
     confusion_counts,
     per_class_accuracy,
 )
-from reptrace.onset_detection import annotate_threshold_crossings, detect_onsets
 from reptrace.results.tables import (  # pylint: disable=no-name-in-module
     peak_metric_rows,
     summarize_metric_table,
@@ -679,16 +679,7 @@ def evaluate_participant_stimulus_onset_scan(
             )
         )
 
-    scan_rows = _annotate_stimulus_onset_scan_with_reptrace(
-        scan_rows,
-        threshold_window=threshold_window,
-        threshold_quantile=threshold_quantile,
-        threshold_method=threshold_method,
-        min_consecutive=min_consecutive,
-        min_duration=min_duration,
-        require_stable_prediction=require_stable_prediction,
-    )
-    event_rows = _stimulus_onset_event_rows_from_reptrace(
+    scan_rows, event_rows = _run_stimulus_epoched_onset_scan(
         scan_rows,
         threshold_window=threshold_window,
         threshold_quantile=threshold_quantile,
@@ -1030,6 +1021,51 @@ def _stimulus_score_observation_frame(scan_rows):
     return frame
 
 
+def _run_stimulus_epoched_onset_scan(
+    scan_rows,
+    *,
+    threshold_window,
+    threshold_quantile,
+    threshold_method=DEFAULT_ONSET_THRESHOLD_METHOD,
+    min_consecutive=DEFAULT_ONSET_MIN_CONSECUTIVE,
+    min_duration=DEFAULT_ONSET_MIN_DURATION,
+    require_stable_prediction=DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION,
+    detection_start_s=None,
+):
+    if not scan_rows:
+        return [], []
+
+    original_columns = list(pd.DataFrame(scan_rows).columns)
+    result = run_epoched_onset_scan(
+        _stimulus_score_observation_frame(scan_rows),
+        threshold_window=threshold_window,
+        threshold_quantile=threshold_quantile,
+        score_column="stimulus_score",
+        threshold_method=threshold_method,
+        min_consecutive=min_consecutive,
+        min_duration=min_duration,
+        require_stable_prediction=require_stable_prediction,
+        detection_start=detection_start_s,
+    )
+    scan_frame = result.observations.copy()
+    scan_frame["threshold_window_start_s"] = scan_frame["threshold_window_start"]
+    scan_frame["threshold_window_stop_s"] = scan_frame["threshold_window_stop"]
+    scan_frame["min_consecutive"] = int(min_consecutive)
+    scan_frame["min_duration_s"] = min_duration if min_duration is not None else np.nan
+    scan_frame["require_stable_prediction"] = bool(require_stable_prediction)
+    metadata_columns = [
+        "threshold_method",
+        "min_consecutive",
+        "min_duration_s",
+        "require_stable_prediction",
+    ]
+    output_columns = original_columns + [column for column in metadata_columns if column not in original_columns]
+    return scan_frame[output_columns].to_dict(orient="records"), _stimulus_onset_event_rows_from_epoched_result(
+        result,
+        detection_start_s,
+    )
+
+
 def _annotate_stimulus_onset_scan_with_reptrace(
     scan_rows,
     *,
@@ -1040,34 +1076,15 @@ def _annotate_stimulus_onset_scan_with_reptrace(
     min_duration=DEFAULT_ONSET_MIN_DURATION,
     require_stable_prediction=DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION,
 ):
-    if not scan_rows:
-        return []
-
-    original_columns = list(pd.DataFrame(scan_rows).columns)
-    observations = _stimulus_score_observation_frame(scan_rows)
-    thresholded = annotate_threshold_crossings(
-        observations,
+    return _run_stimulus_epoched_onset_scan(
+        scan_rows,
         threshold_window=threshold_window,
         threshold_quantile=threshold_quantile,
-        score_column="stimulus_score",
         threshold_method=threshold_method,
         min_consecutive=min_consecutive,
         min_duration=min_duration,
         require_stable_prediction=require_stable_prediction,
-    )
-    thresholded["threshold_window_start_s"] = thresholded["threshold_window_start"]
-    thresholded["threshold_window_stop_s"] = thresholded["threshold_window_stop"]
-    thresholded["min_consecutive"] = int(min_consecutive)
-    thresholded["min_duration_s"] = min_duration if min_duration is not None else np.nan
-    thresholded["require_stable_prediction"] = bool(require_stable_prediction)
-    metadata_columns = [
-        "threshold_method",
-        "min_consecutive",
-        "min_duration_s",
-        "require_stable_prediction",
-    ]
-    output_columns = original_columns + [column for column in metadata_columns if column not in original_columns]
-    return thresholded[output_columns].to_dict(orient="records")
+    )[0]
 
 
 def _stimulus_onset_event_rows_from_reptrace(
@@ -1081,23 +1098,24 @@ def _stimulus_onset_event_rows_from_reptrace(
     require_stable_prediction=DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION,
     detection_start_s=None,
 ):
-    if not scan_rows:
-        return []
-
-    observations = _stimulus_score_observation_frame(scan_rows)
-    events = detect_onsets(
-        observations,
+    return _run_stimulus_epoched_onset_scan(
+        scan_rows,
         threshold_window=threshold_window,
         threshold_quantile=threshold_quantile,
-        score_column="stimulus_score",
         threshold_method=threshold_method,
         min_consecutive=min_consecutive,
         min_duration=min_duration,
         require_stable_prediction=require_stable_prediction,
-        detection_start=detection_start_s,
-    )
-    reference_rows = observations.sort_values(["sequence_id", "time"]).groupby("sequence_id", sort=True).first().to_dict(orient="index")
-    return [_stimulus_onset_event_row_from_reptrace(reference_rows[event["sequence_id"]], event, detection_start_s) for event in events.to_dict(orient="records")]
+        detection_start_s=detection_start_s,
+    )[1]
+
+
+def _stimulus_onset_event_rows_from_epoched_result(result, detection_start_s):
+    if result.events.empty:
+        return []
+
+    reference_rows = result.observations.sort_values(["sequence_id", "time"]).groupby("sequence_id", sort=True).first().to_dict(orient="index")
+    return [_stimulus_onset_event_row_from_reptrace(reference_rows[event["sequence_id"]], event, detection_start_s) for event in result.events.to_dict(orient="records")]
 
 
 def _stimulus_onset_event_row_from_reptrace(reference_row, event, detection_start_s):
