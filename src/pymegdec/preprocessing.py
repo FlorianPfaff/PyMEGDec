@@ -146,6 +146,13 @@ def extract_windows(data, train_window, null_time_window):
         stimuli_features_cell.append(train_feature)
 
         if null_requested:
+            _require_rounded_null_window_before_train_slice(
+                time,
+                train_window,
+                train_slice,
+                null_time_window,
+                trial_idx,
+            )
             null_slice = _matching_sample_window_slice(
                 time,
                 null_time_window[0],
@@ -169,12 +176,20 @@ def extract_windows(data, train_window, null_time_window):
 def _require_null_window_before_train_window(train_window, null_time_window):
     if np.isnan(null_time_window).all():
         return
-    if null_time_window[1] >= train_window[0]:
-        raise ValueError("Null window must be strictly before train window")
+    if null_time_window[1] > train_window[0]:
+        raise ValueError("Null window must not extend past train window start")
 
 
 def _require_disjoint_window_slices(train_slice, null_slice, trial_idx):
     if null_slice.start < train_slice.stop and train_slice.start < null_slice.stop:
+        raise ValueError(f"Null window selects samples that overlap the train window for trial {trial_idx}.")
+
+
+def _require_rounded_null_window_before_train_slice(time, train_window, train_slice, null_time_window, trial_idx):
+    if np.isnan(null_time_window).all() or null_time_window[1] >= train_window[0]:
+        return
+    rounded_stop = int(np.argmin(np.abs(time - null_time_window[1])))
+    if rounded_stop >= train_slice.start:
         raise ValueError(f"Null window selects samples that overlap the train window for trial {trial_idx}.")
 
 
@@ -243,9 +258,13 @@ def _nearest_window_slice(time, time_window, trial_idx, window_name):
     _require_window_supported(time, start, stop, trial_idx, window_name)
     begin_index = int(np.argmin(np.abs(time - start)))
     end_index = int(np.argmin(np.abs(time - stop)))
-    if end_index < begin_index:
+    if end_index == begin_index and start == stop:
+        return slice(begin_index, begin_index + 1)
+    if end_index <= begin_index:
         raise ValueError(f"{window_name.capitalize()} window is empty for trial {trial_idx}.")
-    return slice(begin_index, end_index + 1)
+    # Windows are half-open [start, stop): a stop value that lands on a
+    # sampled time is a duration boundary, not another selected sample.
+    return slice(begin_index, end_index)
 
 
 def _matching_sample_window_slice(time, start, sample_count, trial_idx, window_name):

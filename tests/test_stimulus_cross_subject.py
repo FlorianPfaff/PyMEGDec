@@ -104,7 +104,7 @@ class TestStimulusCrossSubject(unittest.TestCase):
 
         self.assertEqual(feature_set.features.shape, (4, 4))
         self.assertEqual(feature_set.n_window_samples, 2)
-        self.assertEqual(feature_set.n_baseline_samples, 2)
+        self.assertEqual(feature_set.n_baseline_samples, 1)
         self.assertEqual(feature_set.baseline_feature_mean.shape, (1, 4))
         self.assertEqual(feature_set.baseline_feature_std.shape, (1, 4))
         self.assertTrue(np.allclose(feature_set.baseline_feature_mean[0, :2], feature_set.baseline_feature_mean[0, 2:]))
@@ -129,7 +129,7 @@ class TestStimulusCrossSubject(unittest.TestCase):
         with patch("pymegdec.stimulus_cross_subject.sio.loadmat", side_effect=_loadmat_side_effect(data_by_participant)):
             feature_set = load_participant_stimulus_features("unused", 1, config=config)
 
-        self.assertEqual(feature_set.features.shape, (2, 4))
+        self.assertEqual(feature_set.features.shape, (2, 2))
         self.assertTrue(np.allclose(np.mean(feature_set.features, axis=1), 0.0))
         self.assertTrue(np.allclose(np.std(feature_set.features, axis=1), 1.0))
 
@@ -154,10 +154,10 @@ class TestStimulusCrossSubject(unittest.TestCase):
         with patch("pymegdec.stimulus_cross_subject.sio.loadmat", side_effect=_loadmat_side_effect(data_by_participant)):
             feature_set = load_participant_stimulus_features("unused", 1, config=config)
 
-        self.assertEqual(feature_set.features.shape, (4, 4))
-        self.assertEqual(feature_set.baseline_feature_mean.shape, (1, 4))
+        self.assertEqual(feature_set.features.shape, (4, 2))
+        self.assertEqual(feature_set.baseline_feature_mean.shape, (1, 2))
         self.assertEqual(feature_set.baseline_whitening_matrix.shape, (2, 2))
-        self.assertEqual(feature_set.n_baseline_samples, 2)
+        self.assertEqual(feature_set.n_baseline_samples, 1)
         self.assertTrue(np.allclose(feature_set.baseline_whitening_matrix, feature_set.baseline_whitening_matrix.T))
         self.assertTrue(np.all(np.isfinite(feature_set.features)))
 
@@ -227,6 +227,68 @@ class TestStimulusCrossSubject(unittest.TestCase):
 
         self.assertEqual(feature_set.trial_indices.tolist(), [1, 2, 3, 4])
         self.assertEqual(feature_set.labels.tolist(), [2, 1, 2, 1])
+
+    def test_trial_cap_does_not_limit_baseline_statistics_by_default(self):
+        time = np.asarray([-0.5, 0.0, 0.1, 0.2], dtype=float)
+        labels = [1, 2, 1, 2, 1, 2]
+        baseline_levels = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+        trials = []
+        for baseline_level in baseline_levels:
+            signal = np.zeros((2, time.size), dtype=float)
+            signal[:, :2] = baseline_level
+            signal[:, 2:] = 1.0
+            trials.append(signal)
+        data_by_participant = {1: _mat_data_from_trials(labels, trials, time)}
+        config = CrossSubjectStimulusConfig(
+            window_center=0.15,
+            window_size=0.1,
+            feature_mode="sensor_mean",
+            normalization="subject_baseline_z",
+            components_pca=float("inf"),
+            max_trials_per_class_per_participant=1,
+            trial_selection="first",
+            chance_classes=2,
+        )
+
+        with patch("pymegdec.stimulus_cross_subject.sio.loadmat", side_effect=_loadmat_side_effect(data_by_participant)):
+            feature_set = load_participant_stimulus_features("unused", 1, config=config)
+
+        self.assertEqual(feature_set.trial_indices.tolist(), [0, 1])
+        self.assertEqual(feature_set.baseline_trial_indices.tolist(), [0, 1, 2, 3, 4, 5])
+        self.assertEqual(feature_set.labels.tolist(), [1, 2])
+        self.assertEqual(feature_set.baseline_trial_selection, "all")
+        self.assertTrue(np.allclose(feature_set.baseline_feature_mean, [[35.0, 35.0]]))
+
+    def test_trial_cap_can_use_selected_trials_for_legacy_baseline_statistics(self):
+        time = np.asarray([-0.5, 0.0, 0.1, 0.2], dtype=float)
+        labels = [1, 2, 1, 2, 1, 2]
+        baseline_levels = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+        trials = []
+        for baseline_level in baseline_levels:
+            signal = np.zeros((2, time.size), dtype=float)
+            signal[:, :2] = baseline_level
+            signal[:, 2:] = 1.0
+            trials.append(signal)
+        data_by_participant = {1: _mat_data_from_trials(labels, trials, time)}
+        config = CrossSubjectStimulusConfig(
+            window_center=0.15,
+            window_size=0.1,
+            feature_mode="sensor_mean",
+            normalization="subject_baseline_z",
+            components_pca=float("inf"),
+            max_trials_per_class_per_participant=1,
+            trial_selection="first",
+            baseline_trial_selection="selected",
+            chance_classes=2,
+        )
+
+        with patch("pymegdec.stimulus_cross_subject.sio.loadmat", side_effect=_loadmat_side_effect(data_by_participant)):
+            feature_set = load_participant_stimulus_features("unused", 1, config=config)
+
+        self.assertEqual(feature_set.trial_indices.tolist(), [0, 1])
+        self.assertEqual(feature_set.baseline_trial_indices.tolist(), [0, 1])
+        self.assertEqual(feature_set.baseline_trial_selection, "selected")
+        self.assertTrue(np.allclose(feature_set.baseline_feature_mean, [[15.0, 15.0]]))
 
     def test_evaluate_cross_subject_stimulus_smoke(self):
         data_by_participant = {

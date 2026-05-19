@@ -81,6 +81,23 @@ def _parse_float_list(value: str) -> tuple[float, ...]:
     return values
 
 
+def _parse_chance_classes(value: str) -> int | None:
+    """Parse a fixed chance denominator or the automatic-inference sentinel."""
+
+    normalized = value.strip().lower()
+    if normalized in {"auto", "actual", "infer", "inferred"}:
+        return None
+
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("chance classes must be a positive integer or auto") from exc
+
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("chance classes must be a positive integer or auto")
+    return parsed
+
+
 _VALUE_OPTIONS_THAT_CAN_START_WITH_DASH = {
     "--baseline-window",
     "--window-centers",
@@ -127,6 +144,7 @@ def parse_classifier_param(value: str | None):
 
 
 parse_float_list = _parse_float_list
+parse_chance_classes = _parse_chance_classes
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -327,9 +345,10 @@ def _build_stimulus_decoding_parser(
     )
     parser.add_argument(
         "--chance-classes",
-        type=int,
-        default=16,
-        help="Number of stimulus classes used for the chance line.",
+        type=_parse_chance_classes,
+        default=None,
+        metavar="N|auto",
+        help="Chance-level denominator. Use auto (default) to infer it from validation labels; pass N, e.g. 16, to force a fixed 1/N chance line.",
     )
     parser.add_argument(
         "--permutations",
@@ -408,6 +427,7 @@ def stimulus_decoding(argv: Sequence[str] | None = None, prog: str | None = None
         components_pca=args.components_pca,
         frequency_range=tuple(args.frequency_range),
         chance_classes=args.chance_classes,
+        infer_chance_classes=args.chance_classes is None,
         permutations=args.permutations,
         permutation_seed=args.permutation_seed,
         transfer_direction=args.transfer_direction,

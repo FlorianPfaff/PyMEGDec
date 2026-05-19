@@ -19,6 +19,8 @@ from pymegdec import _stimulus_cross_subject_legacy as _impl
 DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION = "random"
 DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED = 0
 TRIAL_SELECTION_MODES = ("random", "first")
+DEFAULT_CROSS_SUBJECT_BASELINE_TRIAL_SELECTION = "all"
+BASELINE_TRIAL_SELECTION_MODES = ("all", "selected")
 
 _BASE_CROSS_SUBJECT_CONFIG = _impl.CrossSubjectStimulusConfig
 _BASE_PARTICIPANT_FEATURE_SET = _impl.ParticipantFeatureSet
@@ -36,6 +38,7 @@ class CrossSubjectStimulusConfig(_BASE_CROSS_SUBJECT_CONFIG):
 
     trial_selection: str = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION
     trial_selection_seed: int | None = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED
+    baseline_trial_selection: str = DEFAULT_CROSS_SUBJECT_BASELINE_TRIAL_SELECTION
 
 
 @dataclass(frozen=True)
@@ -43,8 +46,10 @@ class ParticipantFeatureSet(_BASE_PARTICIPANT_FEATURE_SET):
     """Windowed features with original trial-index bookkeeping."""
 
     trial_indices: np.ndarray | None = None
+    baseline_trial_indices: np.ndarray | None = None
     trial_selection: str = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION
     trial_selection_seed: int | None = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED
+    baseline_trial_selection: str = DEFAULT_CROSS_SUBJECT_BASELINE_TRIAL_SELECTION
 
 
 def _ranked_label_metrics(true_labels, class_scores, score_classes):
@@ -162,7 +167,7 @@ def _prediction_group_columns_with_alignment():
 
 def _prediction_group_columns_with_trial_selection(columns):
     output = list(columns)
-    for column in ("trial_selection", "trial_selection_seed"):
+    for column in ("trial_selection", "trial_selection_seed", "baseline_trial_selection"):
         if column not in output:
             output.append(column)
     return tuple(output)
@@ -182,6 +187,7 @@ def make_cross_subject_candidate_configs(  # pylint: disable=too-many-arguments
     max_trials_per_class_per_participant=None,
     trial_selection=DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION,
     trial_selection_seed=DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED,
+    baseline_trial_selection=DEFAULT_CROSS_SUBJECT_BASELINE_TRIAL_SELECTION,
     chance_classes=_impl.DEFAULT_CROSS_SUBJECT_CHANCE_CLASSES,
     random_state=0,
     signflip_permutations=10_000,
@@ -203,6 +209,7 @@ def make_cross_subject_candidate_configs(  # pylint: disable=too-many-arguments
             max_trials_per_class_per_participant=max_trials_per_class_per_participant,
             trial_selection=trial_selection,
             trial_selection_seed=trial_selection_seed,
+            baseline_trial_selection=baseline_trial_selection,
             chance_classes=chance_classes,
             random_state=random_state,
             signflip_permutations=signflip_permutations,
@@ -235,6 +242,11 @@ def load_participant_stimulus_features(data_folder, participant, *, config=None)
         participant=participant,
     )
     labels = all_labels[trial_indices]
+    baseline_trial_indices = _baseline_trial_indices(
+        trial_indices,
+        all_labels.shape[0],
+        config.baseline_trial_selection,
+    )
     features, n_window_samples = _impl._extract_window_features(
         data,
         _impl._centered_window(config.window_center, config.window_size),
@@ -250,13 +262,13 @@ def load_participant_stimulus_features(data_folder, participant, *, config=None)
             data,
             config,
             n_window_samples,
-            trial_indices,
+            baseline_trial_indices,
         )
     if config.normalization == "subject_baseline_whiten":
         baseline_whitening_matrix, n_baseline_samples = _impl._baseline_channel_whitening_matrix(
             data,
             config.baseline_window,
-            trial_indices,
+            baseline_trial_indices,
         )
     normalized_features = _impl._normalize_features(
         features,
@@ -281,8 +293,10 @@ def load_participant_stimulus_features(data_folder, participant, *, config=None)
         n_baseline_samples=int(n_baseline_samples),
         max_trials_per_class_per_participant=config.max_trials_per_class_per_participant,
         trial_indices=np.asarray(trial_indices, dtype=int),
+        baseline_trial_indices=np.asarray(baseline_trial_indices, dtype=int),
         trial_selection=config.trial_selection,
         trial_selection_seed=config.trial_selection_seed,
+        baseline_trial_selection=config.baseline_trial_selection,
     )
 
 
@@ -294,6 +308,7 @@ def summarize_cross_subject_stimulus_smoke(outer_rows, *, config=None):
     for row in rows:
         row["trial_selection"] = config.trial_selection
         row["trial_selection_seed"] = _seed_field(config.trial_selection_seed)
+        row["baseline_trial_selection"] = config.baseline_trial_selection
     return rows
 
 
@@ -355,11 +370,13 @@ def _score_outer_fold_model(fitted_model, test_set, config, *, include_predictio
     outer_row["alignment_target_centering"] = test_alignment_metadata["target_centering"]
     outer_row["trial_selection"] = config.trial_selection
     outer_row["trial_selection_seed"] = _seed_field(config.trial_selection_seed)
+    outer_row["baseline_trial_selection"] = config.baseline_trial_selection
     for row in prediction_rows:
         row["alignment_test_transform"] = test_alignment_metadata["test_transform"]
         row["alignment_target_centering"] = test_alignment_metadata["target_centering"]
         row["trial_selection"] = config.trial_selection
         row["trial_selection_seed"] = _seed_field(config.trial_selection_seed)
+        row["baseline_trial_selection"] = config.baseline_trial_selection
     return outer_row, prediction_rows
 
 
@@ -374,6 +391,7 @@ def _feature_cache_key(config):
         config.max_trials_per_class_per_participant,
         str(getattr(config, "trial_selection", DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION)),
         _seed_field(getattr(config, "trial_selection_seed", DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED)),
+        str(getattr(config, "baseline_trial_selection", DEFAULT_CROSS_SUBJECT_BASELINE_TRIAL_SELECTION)),
     )
 
 
@@ -399,6 +417,7 @@ def _prediction_rows(test_set, test_labels, predictions, true_label_ranks, *, co
                 "max_trials_per_class_per_participant": config.max_trials_per_class_per_participant,
                 "trial_selection": config.trial_selection,
                 "trial_selection_seed": _seed_field(config.trial_selection_seed),
+                "baseline_trial_selection": config.baseline_trial_selection,
                 "actual_components_pca": actual_components_pca,
                 "trial": int(trial_idx),
                 "test_trial_index": int(trial_idx),
@@ -451,6 +470,15 @@ def _selected_trial_indices(
     return np.asarray(sorted(selected), dtype=int)
 
 
+def _baseline_trial_indices(trial_indices, n_trials, selection=DEFAULT_CROSS_SUBJECT_BASELINE_TRIAL_SELECTION):
+    """Return trial indices used for unsupervised baseline normalization."""
+
+    selection = _normalize_baseline_trial_selection(selection)
+    if selection == "selected":
+        return np.asarray(trial_indices, dtype=int).ravel()
+    return np.arange(int(n_trials), dtype=int)
+
+
 def _trial_selection_rng(seed, participant):
     if seed is None:
         return np.random.default_rng()
@@ -485,6 +513,9 @@ def _normalized_config(config):
         max_trials_per_class_per_participant=_impl._normalize_trial_cap(config.max_trials_per_class_per_participant),
         trial_selection=_normalize_trial_selection(getattr(config, "trial_selection", DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION)),
         trial_selection_seed=_normalize_trial_selection_seed(getattr(config, "trial_selection_seed", DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED)),
+        baseline_trial_selection=_normalize_baseline_trial_selection(
+            getattr(config, "baseline_trial_selection", DEFAULT_CROSS_SUBJECT_BASELINE_TRIAL_SELECTION)
+        ),
         chance_classes=config.chance_classes,
         random_state=config.random_state,
         signflip_permutations=config.signflip_permutations,
@@ -496,6 +527,13 @@ def _normalize_trial_selection(value):
     normalized = str(value).strip().lower().replace("-", "_")
     if normalized not in TRIAL_SELECTION_MODES:
         raise ValueError(f"trial_selection must be one of {TRIAL_SELECTION_MODES}.")
+    return normalized
+
+
+def _normalize_baseline_trial_selection(value):
+    normalized = str(value).strip().lower().replace("-", "_")
+    if normalized not in BASELINE_TRIAL_SELECTION_MODES:
+        raise ValueError(f"baseline_trial_selection must be one of {BASELINE_TRIAL_SELECTION_MODES}.")
     return normalized
 
 
@@ -511,7 +549,9 @@ def _normalize_trial_selection_seed(value):
 def _install_module_fixes():
     _impl.DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION  # type: ignore[attr-defined]
     _impl.DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED  # type: ignore[attr-defined]
+    _impl.DEFAULT_CROSS_SUBJECT_BASELINE_TRIAL_SELECTION = DEFAULT_CROSS_SUBJECT_BASELINE_TRIAL_SELECTION  # type: ignore[attr-defined]
     _impl.TRIAL_SELECTION_MODES = TRIAL_SELECTION_MODES  # type: ignore[attr-defined]
+    _impl.BASELINE_TRIAL_SELECTION_MODES = BASELINE_TRIAL_SELECTION_MODES  # type: ignore[attr-defined]
     _impl.CrossSubjectStimulusConfig = CrossSubjectStimulusConfig  # type: ignore[misc]
     _impl.ParticipantFeatureSet = ParticipantFeatureSet  # type: ignore[misc]
     _impl.make_cross_subject_candidate_configs = make_cross_subject_candidate_configs
@@ -524,10 +564,12 @@ def _install_module_fixes():
     _impl._feature_cache_key = _feature_cache_key
     _impl._prediction_rows = _prediction_rows
     _impl._selected_trial_indices = _selected_trial_indices
+    _impl._baseline_trial_indices = _baseline_trial_indices  # type: ignore[attr-defined]
     _impl._feature_set_trial_indices = _feature_set_trial_indices  # type: ignore[attr-defined]
     _impl._seed_field = _seed_field  # type: ignore[attr-defined]
     _impl._normalized_config = _normalized_config
     _impl._normalize_trial_selection = _normalize_trial_selection  # type: ignore[attr-defined]
+    _impl._normalize_baseline_trial_selection = _normalize_baseline_trial_selection  # type: ignore[attr-defined]
     _impl._normalize_trial_selection_seed = _normalize_trial_selection_seed  # type: ignore[attr-defined]
     _impl.CROSS_SUBJECT_PREDICTION_GROUP_COLUMNS = _prediction_group_columns_with_trial_selection(_prediction_group_columns_with_alignment())
 

@@ -1571,7 +1571,9 @@ def _time_mask(time_vector, time_window):
     if start >= stop:
         raise ValueError("time_window start must be before stop.")
     tolerance = 1e-12
-    mask = (time_vector >= start - tolerance) & (time_vector <= stop + tolerance)
+    # Windows are half-open [start, stop): a stop value that lands on a
+    # sampled time is a duration boundary, not another selected sample.
+    mask = (time_vector >= start - tolerance) & (time_vector < stop - tolerance)
     if not np.any(mask):
         raise ValueError(f"time_window {time_window} does not overlap the data.")
     return mask

@@ -9,6 +9,7 @@ from dataclasses import replace
 from pymegdec.alpha_metrics import write_alpha_metrics_csv
 from pymegdec.cli import (
     normalize_argv,
+    parse_chance_classes,
     parse_classifier_param,
     parse_float_list,
     parse_float_or_inf,
@@ -58,7 +59,9 @@ from pymegdec.stimulus_decoding import (
     DEFAULT_ONSET_THRESHOLD_METHOD,
     DEFAULT_ONSET_THRESHOLD_QUANTILE,
     DEFAULT_ONSET_THRESHOLD_WINDOW,
+    DEFAULT_ONSET_SCORE_TYPE,
     ONSET_THRESHOLD_METHODS,
+    ONSET_SCORE_TYPES,
     TRANSFER_DIRECTIONS,
     StimulusDecodingConfig,
     evaluate_participant_stimulus_decoding_diagnostics,
@@ -165,7 +168,13 @@ def _add_model_args(parser: argparse.ArgumentParser, *, include_transfer_directi
     parser.add_argument("--classifier-param", default=None, help="Classifier parameter value, JSON, Python literal, numeric value, or nan.")
     parser.add_argument("--components-pca", type=parse_int_or_inf, default=100, help="Number of PCA components, or inf.")
     parser.add_argument("--frequency-range", type=parse_float_or_inf, nargs=2, metavar=("LOW", "HIGH"), default=(0.0, float("inf")), help="Frequency range in Hz.")
-    parser.add_argument("--chance-classes", type=int, default=16, help="Number of stimulus classes used for chance level.")
+    parser.add_argument(
+        "--chance-classes",
+        type=parse_chance_classes,
+        default=None,
+        metavar="N|auto",
+        help="Chance-level denominator. Use auto (default) to infer it from validation labels; pass N, e.g. 16, to force a fixed 1/N chance level.",
+    )
 
 
 def _base_config(args: argparse.Namespace, *, window_centers: tuple[float, ...], transfer_direction: str | None = None) -> StimulusDecodingConfig:
@@ -179,8 +188,10 @@ def _base_config(args: argparse.Namespace, *, window_centers: tuple[float, ...],
         components_pca=args.components_pca,
         frequency_range=tuple(args.frequency_range),
         chance_classes=args.chance_classes,
+        infer_chance_classes=args.chance_classes is None,
         permutations=0,
         transfer_direction=transfer_direction or args.transfer_direction,
+        onset_score_type=getattr(args, "onset_score_type", DEFAULT_ONSET_SCORE_TYPE),
     )
 
 
@@ -758,6 +769,15 @@ def _build_onset_scan_parser(prog: str | None = None) -> argparse.ArgumentParser
         action="store_true",
         default=DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION,
         help="Break onset runs when the predicted stimulus changes across adjacent above-threshold windows.",
+    )
+    parser.add_argument(
+        "--onset-score-type",
+        choices=ONSET_SCORE_TYPES,
+        default=DEFAULT_ONSET_SCORE_TYPE,
+        help=(
+            "Score used for onset thresholding: predicted_class_score thresholds predicted-class confidence; "
+            "true_class_score thresholds evidence for the validation trial's true stimulus."
+        ),
     )
     parser.add_argument("--detection-start-s", type=parse_float_or_inf, default=None, help="Optional earliest scan center considered for first detection.")
     _add_model_args(parser, include_transfer_direction=True)

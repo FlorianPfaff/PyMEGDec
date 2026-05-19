@@ -34,6 +34,7 @@ from reptrace.decoding.transfer import (  # pylint: disable=no-name-in-module
 from reptrace.decoding.windowed import fit_window_model as fit_reptrace_window_model
 from reptrace.decoding.windowed import (
     predict_window_model as predict_reptrace_window_model,
+    transform_window_features as transform_reptrace_window_features,
 )
 from reptrace.metrics.confusion import (  # pylint: disable=no-name-in-module
     confusion_counts,
@@ -58,6 +59,10 @@ DEFAULT_ONSET_THRESHOLD_METHOD = "point"
 DEFAULT_ONSET_MIN_CONSECUTIVE = 1
 DEFAULT_ONSET_MIN_DURATION = None
 DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION = False
+ONSET_SCORE_TYPE_PREDICTED_CLASS = "predicted_class_score"
+ONSET_SCORE_TYPE_TRUE_CLASS = "true_class_score"
+ONSET_SCORE_TYPES = (ONSET_SCORE_TYPE_PREDICTED_CLASS, ONSET_SCORE_TYPE_TRUE_CLASS)
+DEFAULT_ONSET_SCORE_TYPE = ONSET_SCORE_TYPE_PREDICTED_CLASS
 ONSET_THRESHOLD_METHODS = ("point", "max_run")
 TRANSFER_DIRECTIONS = ("main-to-cue", "cue-to-main")
 SUMMARY_GROUP_FIELDS = (
@@ -140,6 +145,7 @@ class StimulusDecodingConfig:
     permutations: int = 0
     permutation_seed: int | None = None
     transfer_direction: str = "main-to-cue"
+    onset_score_type: str = DEFAULT_ONSET_SCORE_TYPE
 
 
 def window_centers_from_range(time_window: tuple[float, float], step_s: float) -> tuple[float, ...]:
@@ -661,7 +667,7 @@ def evaluate_participant_stimulus_onset_scan(
     for scan_window_center in config.window_centers:
         scan_window_center = float(scan_window_center)
         validation_features = _validation_features_for_window(validation_data, scan_window_center, config)
-        predictions, scores = _predict_window_model(model_bundle, validation_features)
+        predictions, score_details = _predict_window_score_details(model_bundle, validation_features, labels_validation)
         scan_rows.extend(
             _stimulus_onset_scan_rows(
                 participant,
@@ -670,7 +676,7 @@ def evaluate_participant_stimulus_onset_scan(
                 scan_window_center,
                 labels_validation,
                 predictions,
-                scores,
+                score_details,
                 classifier_param,
                 model_bundle,
                 config,
@@ -773,6 +779,7 @@ def summarize_stimulus_onset_scan(rows):
             "train_window_center_s",
             "threshold_method",
             "min_consecutive",
+            "onset_score_type",
             "min_duration_s",
             "require_stable_prediction",
             "scan_window_center_s",
@@ -831,6 +838,7 @@ def summarize_stimulus_onset_events(rows):
             "train_window_center_s",
             "threshold_method",
             "min_consecutive",
+            "onset_score_type",
             "min_duration_s",
             "require_stable_prediction",
             "classifier",
@@ -953,6 +961,61 @@ def _predict_window_model(model_bundle, features):
     return predict_reptrace_window_model(model_bundle, features)
 
 
+def _predict_window_score_details(model_bundle, features, true_labels):
+    """Return predictions plus per-trial predicted/true-class decision scores."""
+
+    transformed_features = transform_reptrace_window_features(model_bundle, features)
+    predictions = np.asarray(model_bundle.model.predict(transformed_features))
+    score_matrix = _classifier_score_matrix(model_bundle, transformed_features)
+    classes = _model_classes(model_bundle)
+    predicted_scores = _scores_for_labels(score_matrix, classes, predictions)
+    true_scores = _scores_for_labels(score_matrix, classes, true_labels)
+    top_scores = _row_max_finite(score_matrix)
+    second_scores = _row_second_max_finite(score_matrix)
+    score_margins = top_scores - second_scores
+    score_margins[~np.isfinite(second_scores)] = np.nan
+    return predictions, {
+        "predicted_class_score": predicted_scores,
+        "true_class_score": true_scores,
+        "top_class_score": top_scores,
+        "score_margin": score_margins,
+    }
+
+
+def _classifier_score_matrix(model_bundle, transformed_features):
+    model = model_bundle.model
+    if hasattr(model, "decision_function"):
+        scores = np.asarray(model.decision_function(transformed_features), dtype=float)
+    elif hasattr(model, "predict_proba"):
+        scores = np.asarray(model.predict_proba(transformed_features), dtype=float)
+    else:
+        return np.full((transformed_features.shape[0], len(_model_classes(model_bundle))), np.nan, dtype=float)
+    if scores.ndim == 1:
+        classes = _model_classes(model_bundle)
+        if classes.shape[0] == 2:
+            scores = np.column_stack((-scores, scores))
+        else:
+            scores = scores.reshape(-1, 1)
+    return scores
+
+
+def _model_classes(model_bundle):
+    classes = getattr(model_bundle.model, "classes_", None)
+    if classes is None:
+        classes = np.unique(model_bundle.train_labels)
+    return np.asarray(classes)
+
+
+def _scores_for_labels(score_matrix, classes, labels):
+    scores = np.full(np.asarray(labels).ravel().shape[0], np.nan, dtype=float)
+    class_to_index = {label: index for index, label in enumerate(np.asarray(classes).tolist())}
+    for row_index, label in enumerate(np.asarray(labels).ravel()):
+        class_index = class_to_index.get(label)
+        if class_index is not None and class_index < score_matrix.shape[1]:
+            scores[row_index] = float(score_matrix[row_index, class_index])
+    return scores
+
+
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments
 def _stimulus_onset_scan_rows(
     participant,
@@ -961,7 +1024,7 @@ def _stimulus_onset_scan_rows(
     scan_window_center,
     labels_validation,
     predictions,
-    scores,
+    score_details,
     classifier_param,
     model_bundle,
     config,
@@ -970,10 +1033,18 @@ def _stimulus_onset_scan_rows(
 ):
     scan_window = _centered_window(scan_window_center, config.window_size)
     chance_accuracy = 1.0 / config.chance_classes
+    onset_score_type = _onset_score_type(config)
+    predicted_scores = np.asarray(score_details["predicted_class_score"], dtype=float)
+    true_scores = np.asarray(score_details["true_class_score"], dtype=float)
+    top_scores = np.asarray(score_details["top_class_score"], dtype=float)
+    score_margins = np.asarray(score_details["score_margin"], dtype=float)
     rows = []
-    for trial_idx, (true_label, predicted_label, score) in enumerate(zip(labels_validation, predictions, scores)):
+    for trial_idx, (true_label, predicted_label, predicted_score, true_score, top_score, score_margin) in enumerate(
+        zip(labels_validation, predictions, predicted_scores, true_scores, top_scores, score_margins)
+    ):
         true_stimulus = _display_stimulus_label(true_label, variant)
         predicted_stimulus = _display_stimulus_label(predicted_label, variant)
+        onset_score = _select_onset_score(onset_score_type, predicted_score, true_score)
         rows.append(
             {
                 "participant": participant,
@@ -995,7 +1066,13 @@ def _stimulus_onset_scan_rows(
                 "true_stimulus_id": true_stimulus,
                 "predicted_stimulus_id": predicted_stimulus,
                 "correct": bool(predicted_label == true_label),
-                "stimulus_score": float(score),
+                "stimulus_score": float(onset_score),
+                "predicted_class_score": float(predicted_score),
+                "true_class_score": float(true_score),
+                "top_class_score": float(top_score),
+                "score_margin": float(score_margin),
+                "onset_score": float(onset_score),
+                "onset_score_type": onset_score_type,
                 "score_threshold": np.nan,
                 "above_threshold": False,
                 "threshold_quantile": threshold_quantile,
@@ -1027,6 +1104,9 @@ def _stimulus_score_observation_frame(scan_rows):
     frame["true_class"] = frame["true_stimulus_id"]
     frame["predicted_class"] = frame["predicted_stimulus_id"]
     frame["is_correct"] = frame["correct"].astype(bool)
+    score_column = _onset_detector_score_column(frame)
+    if score_column != "stimulus_score":
+        frame["stimulus_score"] = pd.to_numeric(frame[score_column], errors="coerce")
     return frame
 
 
@@ -1045,11 +1125,12 @@ def _annotate_stimulus_onset_scan_with_reptrace(
 
     original_columns = list(pd.DataFrame(scan_rows).columns)
     observations = _stimulus_score_observation_frame(scan_rows)
+    score_column = _onset_detector_score_column(observations)
     thresholded = annotate_threshold_crossings(
         observations,
         threshold_window=threshold_window,
         threshold_quantile=threshold_quantile,
-        score_column="stimulus_score",
+        score_column=score_column,
         threshold_method=threshold_method,
         min_consecutive=min_consecutive,
         min_duration=min_duration,
@@ -1064,6 +1145,7 @@ def _annotate_stimulus_onset_scan_with_reptrace(
         "threshold_method",
         "min_consecutive",
         "min_duration_s",
+        "score_column",
         "require_stable_prediction",
     ]
     output_columns = original_columns + [column for column in metadata_columns if column not in original_columns]
@@ -1085,11 +1167,12 @@ def _stimulus_onset_event_rows_from_reptrace(
         return []
 
     observations = _stimulus_score_observation_frame(scan_rows)
+    score_column = _onset_detector_score_column(observations)
     events = detect_onsets(
         observations,
         threshold_window=threshold_window,
         threshold_quantile=threshold_quantile,
-        score_column="stimulus_score",
+        score_column=score_column,
         threshold_method=threshold_method,
         min_consecutive=min_consecutive,
         min_duration=min_duration,
@@ -1097,10 +1180,14 @@ def _stimulus_onset_event_rows_from_reptrace(
         detection_start=detection_start_s,
     )
     reference_rows = observations.sort_values(["sequence_id", "time"]).groupby("sequence_id", sort=True).first().to_dict(orient="index")
-    return [_stimulus_onset_event_row_from_reptrace(reference_rows[event["sequence_id"]], event, detection_start_s) for event in events.to_dict(orient="records")]
+    detection_rows = _event_detection_row_lookup(observations)
+    return [
+        _stimulus_onset_event_row_from_reptrace(reference_rows[event["sequence_id"]], event, detection_start_s, detection_rows.get(_event_detection_key(event)))
+        for event in events.to_dict(orient="records")
+    ]
 
 
-def _stimulus_onset_event_row_from_reptrace(reference_row, event, detection_start_s):
+def _stimulus_onset_event_row_from_reptrace(reference_row, event, detection_start_s, detection_row=None):
     detected = bool(event["detected"])
     min_duration = event.get("min_duration", np.nan)
     if min_duration is None:
@@ -1127,6 +1214,12 @@ def _stimulus_onset_event_row_from_reptrace(reference_row, event, detection_star
         "predicted_stimulus_id_at_detection": event["predicted_class_at_detection"] if detected else np.nan,
         "correct_detected_stimulus": bool(event["is_correct_at_detection"]) if detected else False,
         "stimulus_score_at_detection": event["score_at_detection"],
+        "onset_score_at_detection": event["score_at_detection"],
+        "predicted_class_score_at_detection": _event_detection_value(detection_row, "predicted_class_score", np.nan),
+        "true_class_score_at_detection": _event_detection_value(detection_row, "true_class_score", np.nan),
+        "score_margin_at_detection": _event_detection_value(detection_row, "score_margin", np.nan),
+        "onset_score_type": reference_row.get("onset_score_type", DEFAULT_ONSET_SCORE_TYPE),
+        "score_column": event.get("score_column", reference_row.get("score_column", "stimulus_score")),
         "score_threshold": event["score_threshold"],
         "threshold_quantile": event["threshold_quantile"],
         "threshold_window_start_s": event["threshold_window_start"],
@@ -1147,6 +1240,67 @@ def _stimulus_onset_event_row_from_reptrace(reference_row, event, detection_star
         "frequency_low_hz": reference_row["frequency_low_hz"],
         "frequency_high_hz": reference_row["frequency_high_hz"],
     }
+
+
+def _onset_score_type(config):
+    value = str(getattr(config, "onset_score_type", DEFAULT_ONSET_SCORE_TYPE)).strip()
+    if value not in ONSET_SCORE_TYPES:
+        supported = ", ".join(ONSET_SCORE_TYPES)
+        raise ValueError(f"Unsupported onset score type: {value}. Supported values: {supported}")
+    return value
+
+
+def _select_onset_score(onset_score_type, predicted_score, true_score):
+    if onset_score_type == ONSET_SCORE_TYPE_TRUE_CLASS:
+        return true_score
+    return predicted_score
+
+
+def _onset_detector_score_column(frame):
+    return "onset_score" if "onset_score" in frame.columns else "stimulus_score"
+
+
+def _event_detection_row_lookup(observations):
+    lookup = {}
+    for row in observations.to_dict(orient="records"):
+        key = _event_row_key(row.get("sequence_id"), row.get("time"))
+        if key is not None:
+            lookup[key] = row
+    return lookup
+
+
+def _event_detection_key(event):
+    if not bool(event.get("detected", False)):
+        return None
+    return _event_row_key(event.get("sequence_id"), event.get("detection_time"))
+
+
+def _event_row_key(sequence_id, time):
+    time = _to_float(time)
+    if not np.isfinite(time):
+        return None
+    return sequence_id, _window_center_key(time)
+
+
+def _event_detection_value(detection_row, column, default):
+    if detection_row is None:
+        return default
+    return detection_row.get(column, default)
+
+
+def _row_max_finite(matrix):
+    return np.asarray([float(np.max(row[np.isfinite(row)])) if np.any(np.isfinite(row)) else np.nan for row in np.asarray(matrix, dtype=float)], dtype=float)
+
+
+def _row_second_max_finite(matrix):
+    values = []
+    for row in np.asarray(matrix, dtype=float):
+        finite = np.sort(row[np.isfinite(row)])
+        if finite.size < 2:
+            values.append(np.nan)
+        else:
+            values.append(float(finite[-2]))
+    return np.asarray(values, dtype=float)
 
 
 # jscpd:ignore-end

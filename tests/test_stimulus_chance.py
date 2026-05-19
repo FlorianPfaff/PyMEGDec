@@ -1,8 +1,11 @@
+import argparse
 import unittest
 from unittest.mock import patch
 
 import numpy as np
+from pymegdec import cli as legacy_cli
 from pymegdec import _stimulus_decoding_core as stimulus_core
+from pymegdec import stimulus_cli
 from pymegdec.stimulus_decoding import (
     DEFAULT_CHANCE_CLASSES,
     StimulusDecodingConfig,
@@ -113,6 +116,78 @@ class TestStimulusChanceLevel(unittest.TestCase):
         self.assertEqual(row["n_validation_classes"], 2)
         self.assertEqual(row["chance_accuracy"], 1.0 / DEFAULT_CHANCE_CLASSES)
         self.assertEqual(row["chance_percent"], 100.0 / DEFAULT_CHANCE_CLASSES)
+
+
+class TestStimulusChanceCli(unittest.TestCase):
+    def test_parse_chance_classes_accepts_auto_and_fixed_values(self):
+        self.assertIsNone(legacy_cli.parse_chance_classes("auto"))
+        self.assertIsNone(legacy_cli.parse_chance_classes("inferred"))
+        self.assertEqual(legacy_cli.parse_chance_classes("16"), 16)
+
+    def test_parse_chance_classes_rejects_invalid_values(self):
+        for token in ("0", "-1", "not-a-number"):
+            with self.subTest(token=token):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    legacy_cli.parse_chance_classes(token)
+
+    def test_legacy_stimulus_cli_default_keeps_auto_chance(self):
+        config = self._legacy_config_from_cli(["--output", "out.csv"])
+
+        self.assertIsNone(config.chance_classes)
+        self.assertTrue(config.infer_chance_classes)
+
+    def test_legacy_stimulus_cli_explicit_sixteen_forces_fixed_chance(self):
+        config = self._legacy_config_from_cli(["--output", "out.csv", "--chance-classes", "16"])
+
+        self.assertEqual(config.chance_classes, 16)
+        self.assertFalse(config.infer_chance_classes)
+
+    def test_grouped_stimulus_base_config_default_keeps_auto_chance(self):
+        config = stimulus_cli._base_config(
+            self._grouped_args(chance_classes=None),
+            window_centers=(0.0,),
+            transfer_direction="main-to-cue",
+        )
+
+        self.assertIsNone(config.chance_classes)
+        self.assertTrue(config.infer_chance_classes)
+
+    def test_grouped_stimulus_base_config_explicit_sixteen_forces_fixed_chance(self):
+        config = stimulus_cli._base_config(
+            self._grouped_args(chance_classes=16),
+            window_centers=(0.0,),
+            transfer_direction="main-to-cue",
+        )
+
+        self.assertEqual(config.chance_classes, 16)
+        self.assertFalse(config.infer_chance_classes)
+
+    def _legacy_config_from_cli(self, argv):
+        captured = {}
+
+        def fake_export(*_args, **kwargs):
+            captured["config"] = kwargs["config"]
+            return [], []
+
+        with patch("pymegdec.cli._transfer_participants", return_value=[1]), patch(
+            "pymegdec.cli.export_time_resolved_stimulus_decoding",
+            side_effect=fake_export,
+        ):
+            legacy_cli.stimulus_decoding(argv)
+        return captured["config"]
+
+    def _grouped_args(self, *, chance_classes):
+        return argparse.Namespace(
+            window_size=0.1,
+            null_window_center=float("nan"),
+            new_framerate=float("inf"),
+            classifier="multiclass-svm",
+            classifier_param=None,
+            components_pca=100,
+            frequency_range=(0.0, float("inf")),
+            chance_classes=chance_classes,
+            transfer_direction="main-to-cue",
+        )
 
 
 if __name__ == "__main__":

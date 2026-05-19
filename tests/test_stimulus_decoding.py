@@ -6,6 +6,7 @@ from pymegdec.stimulus_decoding import (
     StimulusDecodingConfig,
     _annotate_stimulus_onset_scan_with_reptrace,
     _stimulus_onset_event_rows_from_reptrace,
+    ONSET_SCORE_TYPE_TRUE_CLASS,
     evaluate_participant_stimulus_decoding_diagnostics,
     evaluate_participant_stimulus_onset_scan,
     evaluate_participant_stimulus_temporal_generalization,
@@ -314,6 +315,39 @@ class TestStimulusDecoding(unittest.TestCase):
         self.assertFalse(event_rows[0]["detected"])
         self.assertEqual(event_rows[0]["min_consecutive"], 2)
         self.assertEqual(event_rows[0]["threshold_method"], "max_run")
+
+    def test_onset_scan_thresholds_selected_onset_score_column(self):
+        scan_rows = []
+        for time, stimulus_score, onset_score in [
+            (-0.10, 2.0, 0.1),
+            (-0.05, 2.0, 0.2),
+            (0.00, 0.0, 1.0),
+        ]:
+            row = _onset_scan_row(time, stimulus_score)
+            row["predicted_class_score"] = stimulus_score
+            row["true_class_score"] = onset_score
+            row["onset_score"] = onset_score
+            row["onset_score_type"] = ONSET_SCORE_TYPE_TRUE_CLASS
+            scan_rows.append(row)
+
+        thresholded = _annotate_stimulus_onset_scan_with_reptrace(
+            scan_rows,
+            threshold_window=(-0.10, -0.05),
+            threshold_quantile=1.0,
+        )
+        event_rows = _stimulus_onset_event_rows_from_reptrace(
+            thresholded,
+            threshold_window=(-0.10, -0.05),
+            threshold_quantile=1.0,
+            detection_start_s=0.0,
+        )
+
+        self.assertEqual({row["score_column"] for row in thresholded}, {"onset_score"})
+        self.assertFalse(thresholded[0]["above_threshold"])
+        self.assertTrue(thresholded[-1]["above_threshold"])
+        self.assertTrue(event_rows[0]["detected"])
+        self.assertEqual(event_rows[0]["onset_score_type"], ONSET_SCORE_TYPE_TRUE_CLASS)
+        self.assertAlmostEqual(event_rows[0]["stimulus_score_at_detection"], 1.0)
 
     def test_onset_scan_stable_prediction_requirement_breaks_class_flips(self):
         scan_rows = [

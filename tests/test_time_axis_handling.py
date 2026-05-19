@@ -47,8 +47,8 @@ class TestTimeAxisHandling(unittest.TestCase):
 
         stimuli, null = extract_windows(data, (-0.1, 0.1), (np.nan, np.nan))
 
-        np.testing.assert_array_equal(stimuli[0].ravel(), [1, 2, 3])
-        np.testing.assert_array_equal(stimuli[1].ravel(), [12, 13, 14])
+        np.testing.assert_array_equal(stimuli[0].ravel(), [1, 2])
+        np.testing.assert_array_equal(stimuli[1].ravel(), [12, 13])
         self.assertEqual(null, [])
 
     def test_downsample_uses_each_trial_time_support_without_extrapolation(self):
@@ -83,8 +83,8 @@ class TestTimeAxisHandling(unittest.TestCase):
         with patch("pymegdec.stimulus_cross_subject.sio.loadmat", side_effect=_loadmat_side_effect(data_by_participant)):
             feature_set = load_participant_stimulus_features("unused", 1, config=config)
 
-        np.testing.assert_allclose(feature_set.features.ravel(), [2.0, 13.0])
-        self.assertEqual(feature_set.n_window_samples, 3)
+        np.testing.assert_allclose(feature_set.features.ravel(), [1.5, 12.5])
+        self.assertEqual(feature_set.n_window_samples, 2)
 
     def test_legacy_cross_subject_extractors_use_each_trial_time_vector_without_public_shim(self):
         """Guard the implementation path, not only the public facade import."""
@@ -115,14 +115,14 @@ data = {
 features, n_window_samples = cross_subject._extract_window_features(
     data, (-0.1, 0.1), feature_mode="sensor_mean", trial_indices=None
 )
-np.testing.assert_allclose(features.ravel(), [2.0, 13.0])
-assert n_window_samples == 3
+np.testing.assert_allclose(features.ravel(), [1.5, 12.5])
+assert n_window_samples == 2
 
 mean, _std, n_baseline_samples = cross_subject._baseline_channel_statistics(
     data, (-0.1, 0.1), trial_indices=None
 )
-np.testing.assert_allclose(mean, [7.5])
-assert n_baseline_samples == 3
+np.testing.assert_allclose(mean, [7.0])
+assert n_baseline_samples == 2
 '''
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join(sys.path) + os.pathsep + env.get("PYTHONPATH", "")

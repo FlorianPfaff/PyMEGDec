@@ -21,7 +21,7 @@ def _structured_data(trials, times):
 
 
 class TestPreprocessing(unittest.TestCase):
-    def test_extract_windows_uses_inclusive_matlab_column_order(self):
+    def test_extract_windows_uses_half_open_window_with_matlab_column_order(self):
         time = np.array([[-0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2]])
         trial = np.array(
             [
@@ -33,16 +33,18 @@ class TestPreprocessing(unittest.TestCase):
 
         stimuli, null = extract_windows(data, (-0.1, 0.1), (-0.4, -0.2))
 
-        np.testing.assert_array_equal(stimuli[0].ravel(), [4, 14, 5, 15, 6, 16])
-        np.testing.assert_array_equal(null[0].ravel(), [1, 11, 2, 12, 3, 13])
+        np.testing.assert_array_equal(stimuli[0].ravel(), [4, 14, 5, 15])
+        np.testing.assert_array_equal(null[0].ravel(), [1, 11, 2, 12])
 
-    def test_preprocess_features_rejects_touching_null_train_windows(self):
+    def test_preprocess_features_allows_touching_half_open_null_train_windows(self):
         time = np.array([[-0.3, -0.2, -0.1, 0.0, 0.1]])
         trial = np.array([[1, 2, 3, 4, 5]], dtype=float)
         data = _data([trial], [time])
 
-        with self.assertRaisesRegex(ValueError, "strictly before"):
-            preprocess_features(data, (0, float("inf")), float("inf"), 0.2, 0.0, -0.2)
+        stimuli, null = preprocess_features(data, (0, float("inf")), float("inf"), 0.2, 0.0, -0.2)
+
+        np.testing.assert_array_equal(stimuli[0].ravel(), [3.0, 4.0])
+        np.testing.assert_array_equal(null[0].ravel(), [1.0, 2.0])
 
     def test_extract_windows_rejects_rounded_null_sample_overlap(self):
         time = np.array([[-0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2]])
