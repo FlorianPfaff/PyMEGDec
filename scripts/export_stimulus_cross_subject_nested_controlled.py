@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
 
 from pymegdec import stimulus_cross_subject as base  # noqa: E402
 from pymegdec.stimulus_cross_subject import (  # noqa: E402
+    AUTO_CLASSIFIER_PARAM_GRID_TOKEN,
     make_cross_subject_candidate_configs,
 )
 from pymegdec.stimulus_cross_subject_controls import (  # noqa: E402
@@ -80,8 +81,11 @@ def _parse_classifier_params(value: str) -> tuple[object, ...]:
         token = token.strip()
         if not token:
             continue
-        if token.lower() in {"default", "nan"}:
+        normalized = token.lower().replace("_", "-")
+        if normalized in {"default", "nan"}:
             params.append(float("nan"))
+        elif normalized == AUTO_CLASSIFIER_PARAM_GRID_TOKEN:
+            params.append(AUTO_CLASSIFIER_PARAM_GRID_TOKEN)
         else:
             try:
                 parsed = ast.literal_eval(token)

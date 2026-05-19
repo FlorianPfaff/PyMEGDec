@@ -50,6 +50,7 @@ from pymegdec.stimulus_cross_subject import (
     NORMALIZATION_MODES,
     SELECTION_ENSEMBLE_DIVERSITY_MODES,
     SELECTION_ENSEMBLE_WEIGHTING_MODES,
+    AUTO_CLASSIFIER_PARAM_GRID_TOKEN,
     CrossSubjectStimulusConfig,
     TRIAL_SELECTION_MODES,
     export_cross_subject_stimulus_smoke,
@@ -156,6 +157,8 @@ def _parse_classifier_param_grid(value: str) -> tuple[object, ...]:
             continue
         if token.lower() in {"default", "defaults"}:
             values.append(float("nan"))
+        elif token.lower().replace("_", "-") == AUTO_CLASSIFIER_PARAM_GRID_TOKEN:
+            values.append(AUTO_CLASSIFIER_PARAM_GRID_TOKEN)
         else:
             values.append(parse_classifier_param(token))
     if not values:

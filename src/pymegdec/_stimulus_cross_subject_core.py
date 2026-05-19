@@ -19,6 +19,17 @@ from pymegdec import _stimulus_cross_subject_legacy as _impl
 DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION = "random"
 DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED = 0
 TRIAL_SELECTION_MODES = ("random", "first")
+AUTO_CLASSIFIER_PARAM_GRID_TOKEN = "auto-grid"
+CLASSIFIER_AUTO_PARAM_GRIDS = {
+    "gaussian-naive-bayes": (1e-12, 1e-9, 1e-6),
+    "multiclass-svm": (0.1, 1.0, 10.0),
+    "multiclass-svm-weighted": (0.1, 1.0, 10.0),
+    "multinomial-logistic": (0.1, 1.0, 10.0),
+    "multinomial-logistic-weighted": (0.1, 1.0, 10.0),
+    "regularized-qda": (0.25, 0.5, 0.75),
+    "shrinkage-lda": ("auto", 0.1, 0.5, 0.9),
+    "shrinkage-prototype": (0.0, 0.25, 0.5, 0.75),
+}
 
 _BASE_CROSS_SUBJECT_CONFIG = _impl.CrossSubjectStimulusConfig
 _BASE_PARTICIPANT_FEATURE_SET = _impl.ParticipantFeatureSet
@@ -208,16 +219,54 @@ def make_cross_subject_candidate_configs(  # pylint: disable=too-many-arguments
             signflip_permutations=signflip_permutations,
             signflip_seed=signflip_seed,
         )
-        for window_center, feature_mode, normalization, alignment, classifier, classifier_param, components_pca in _impl.product(
+        for window_center, feature_mode, normalization, alignment, classifier, components_pca in _impl.product(
             window_centers,
             feature_modes,
             normalizations,
             alignments,
             classifiers,
-            classifier_params,
             components_pca_values,
         )
+        for classifier_param in _classifier_params_for_classifier(classifier, classifier_params)
     )
+
+
+def _classifier_params_for_classifier(classifier, classifier_params):
+    """Expand classifier-specific parameter grids while preserving explicit values."""
+
+    params = []
+    for classifier_param in classifier_params:
+        if _is_auto_classifier_param_grid(classifier_param):
+            params.extend(CLASSIFIER_AUTO_PARAM_GRIDS.get(str(classifier), (float("nan"),)))
+        else:
+            params.append(classifier_param)
+    return tuple(_dedupe_classifier_params(params))
+
+
+def _is_auto_classifier_param_grid(value):
+    return isinstance(value, str) and value.strip().lower().replace("_", "-") == AUTO_CLASSIFIER_PARAM_GRID_TOKEN
+
+
+def _dedupe_classifier_params(params):
+    seen = set()
+    for param in params:
+        key = _classifier_param_dedupe_key(param)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield param
+
+
+def _classifier_param_dedupe_key(param):
+    if isinstance(param, float) and np.isnan(param):
+        return ("nan",)
+    if isinstance(param, np.generic):
+        param = param.item()
+    try:
+        hash(param)
+    except TypeError:
+        return ("repr", repr(param))
+    return (type(param).__name__, param)
 
 
 def load_participant_stimulus_features(data_folder, participant, *, config=None):
@@ -524,9 +573,13 @@ def _install_module_fixes():
     _impl.DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION  # type: ignore[attr-defined]
     _impl.DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED  # type: ignore[attr-defined]
     _impl.TRIAL_SELECTION_MODES = TRIAL_SELECTION_MODES  # type: ignore[attr-defined]
+    _impl.AUTO_CLASSIFIER_PARAM_GRID_TOKEN = AUTO_CLASSIFIER_PARAM_GRID_TOKEN  # type: ignore[attr-defined]
+    _impl.CLASSIFIER_AUTO_PARAM_GRIDS = CLASSIFIER_AUTO_PARAM_GRIDS  # type: ignore[attr-defined]
     _impl.CrossSubjectStimulusConfig = CrossSubjectStimulusConfig  # type: ignore[misc]
     _impl.ParticipantFeatureSet = ParticipantFeatureSet  # type: ignore[misc]
     _impl.make_cross_subject_candidate_configs = make_cross_subject_candidate_configs
+    _impl._classifier_params_for_classifier = _classifier_params_for_classifier  # type: ignore[attr-defined]
+    _impl._is_auto_classifier_param_grid = _is_auto_classifier_param_grid  # type: ignore[attr-defined]
     _impl.load_participant_stimulus_features = load_participant_stimulus_features
     _impl.summarize_cross_subject_stimulus_smoke = summarize_cross_subject_stimulus_smoke
     _impl._ranked_label_metrics = _ranked_label_metrics

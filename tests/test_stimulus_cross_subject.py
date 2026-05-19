@@ -7,6 +7,8 @@ from unittest.mock import patch
 import numpy as np
 from pymegdec import stimulus_cross_subject as cross_subject
 from pymegdec.stimulus_cross_subject import (
+    AUTO_CLASSIFIER_PARAM_GRID_TOKEN,
+    CLASSIFIER_AUTO_PARAM_GRIDS,
     CrossSubjectStimulusConfig,
     evaluate_cross_subject_stimulus_smoke,
     evaluate_nested_cross_subject_stimulus,
@@ -227,6 +229,40 @@ class TestStimulusCrossSubject(unittest.TestCase):
 
         self.assertEqual(feature_set.trial_indices.tolist(), [1, 2, 3, 4])
         self.assertEqual(feature_set.labels.tolist(), [2, 1, 2, 1])
+
+    def test_auto_classifier_param_grid_expands_per_classifier(self):
+        candidate_configs = make_cross_subject_candidate_configs(
+            window_centers=(0.2,),
+            window_size=0.1,
+            feature_modes=("sensor_mean",),
+            normalizations=("none",),
+            classifiers=("multiclass-svm", "shrinkage-lda", "regularized-qda"),
+            classifier_params=(AUTO_CLASSIFIER_PARAM_GRID_TOKEN,),
+            components_pca_values=(64,),
+        )
+
+        params_by_classifier = {
+            classifier: tuple(config.classifier_param for config in candidate_configs if config.classifier == classifier)
+            for classifier in ("multiclass-svm", "shrinkage-lda", "regularized-qda")
+        }
+
+        self.assertEqual(len(candidate_configs), 10)
+        self.assertEqual(params_by_classifier["multiclass-svm"], CLASSIFIER_AUTO_PARAM_GRIDS["multiclass-svm"])
+        self.assertEqual(params_by_classifier["shrinkage-lda"], CLASSIFIER_AUTO_PARAM_GRIDS["shrinkage-lda"])
+        self.assertEqual(params_by_classifier["regularized-qda"], CLASSIFIER_AUTO_PARAM_GRIDS["regularized-qda"])
+
+    def test_auto_classifier_param_grid_preserves_explicit_classifier_params_once(self):
+        candidate_configs = make_cross_subject_candidate_configs(
+            window_centers=(0.2,),
+            window_size=0.1,
+            feature_modes=("sensor_mean",),
+            normalizations=("none",),
+            classifiers=("multiclass-svm",),
+            classifier_params=(AUTO_CLASSIFIER_PARAM_GRID_TOKEN, 1.0, 100.0),
+            components_pca_values=(64,),
+        )
+
+        self.assertEqual(tuple(config.classifier_param for config in candidate_configs), (0.1, 1.0, 10.0, 100.0))
 
     def test_evaluate_cross_subject_stimulus_smoke(self):
         data_by_participant = {

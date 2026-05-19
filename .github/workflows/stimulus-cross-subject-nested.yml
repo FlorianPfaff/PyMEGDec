@@ -92,9 +92,9 @@ on:
         default: multinomial-logistic,multinomial-logistic-weighted,shrinkage-lda,shrinkage-prototype,regularized-qda,gaussian-naive-bayes,multiclass-svm
         type: string
       classifier_params:
-        description: Candidate classifier parameters; use default for classifier defaults.
+        description: Candidate classifier parameters; use default for classifier defaults or auto-grid for classifier-specific tuning grids.
         required: true
-        default: default
+        default: auto-grid
         type: string
       components_pca_values:
         description: Candidate PCA component counts, or inf.
