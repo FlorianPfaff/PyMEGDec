@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
 from sklearn.linear_model import LogisticRegression
 from sklearn.naive_bayes import GaussianNB
 
@@ -49,6 +50,7 @@ _encode_classifier_labels = encode_classifier_labels
 PYMEGDEC_DEFAULT_CLASSIFIER_PARAMS = {
     "gaussian-naive-bayes": 1e-9,
     "multinomial-logistic-weighted": 1.0,
+    "regularized-qda": 0.5,
     "shrinkage-prototype": 0.25,
 }
 DEFAULT_CLASSIFIER_PARAMS = {
@@ -68,6 +70,13 @@ def _build_weighted_multinomial_logistic(_features, _labels, classifier_param, r
 
 def _build_gaussian_naive_bayes(_features, _labels, classifier_param, _random_state):
     return GaussianNB(var_smoothing=float(classifier_param))
+
+
+def _build_regularized_qda(_features, _labels, classifier_param, _random_state):
+    reg_param = PYMEGDEC_DEFAULT_CLASSIFIER_PARAMS["regularized-qda"] if classifier_param is None else float(classifier_param)
+    if not 0.0 <= reg_param <= 1.0:
+        raise ValueError("regularized-qda classifier_param must be a numeric regularization in [0, 1].")
+    return QuadraticDiscriminantAnalysis(reg_param=reg_param)
 
 
 class ShrinkagePrototypeClassifier:
@@ -129,6 +138,7 @@ CLASSIFIER_REGISTRY = {
     **REPTRACE_CLASSIFIER_REGISTRY,
     "gaussian-naive-bayes": ClassifierSpec(_build_gaussian_naive_bayes),
     "multinomial-logistic-weighted": ClassifierSpec(_build_weighted_multinomial_logistic),
+    "regularized-qda": ClassifierSpec(_build_regularized_qda),
     "shrinkage-prototype": ClassifierSpec(_build_shrinkage_prototype),
 }
 

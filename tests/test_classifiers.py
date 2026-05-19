@@ -72,6 +72,7 @@ class TestClassifiers(unittest.TestCase):
         self.assertIs(classifiers.train_multiclass_classifier, train_multiclass_classifier)
         self.assertIn("gaussian-naive-bayes", classifiers.CLASSIFIER_REGISTRY)
         self.assertIn("multinomial-logistic-weighted", classifiers.CLASSIFIER_REGISTRY)
+        self.assertIn("regularized-qda", classifiers.CLASSIFIER_REGISTRY)
         self.assertIn("shrinkage-prototype", classifiers.CLASSIFIER_REGISTRY)
 
     def test_default_params_for_cross_subject_baseline_classifiers(self):
@@ -79,6 +80,7 @@ class TestClassifiers(unittest.TestCase):
         self.assertEqual(get_default_classifier_param("gaussian-naive-bayes"), 1e-9)
         self.assertEqual(get_default_classifier_param("multinomial-logistic"), 1.0)
         self.assertEqual(get_default_classifier_param("multinomial-logistic-weighted"), 1.0)
+        self.assertEqual(get_default_classifier_param("regularized-qda"), 0.5)
         self.assertEqual(get_default_classifier_param("shrinkage-prototype"), 0.25)
         self.assertIsNone(get_default_classifier_param("shrinkage-lda"))
 
@@ -103,6 +105,29 @@ class TestClassifiers(unittest.TestCase):
         self.assertEqual(model.model.var_smoothing, 1e-8)
         self.assertEqual(probabilities.shape, (3, 3))
         np.testing.assert_allclose(np.sum(probabilities, axis=1), np.ones(3))
+
+    def test_regularized_qda_trains_and_predicts_probabilities(self):
+        rng = np.random.default_rng(13)
+        features = np.vstack(
+            [
+                rng.normal(loc=(-1.0, -1.0, 0.0), scale=0.2, size=(8, 3)),
+                rng.normal(loc=(1.0, 0.5, 0.0), scale=0.2, size=(8, 3)),
+                rng.normal(loc=(0.0, 1.2, 1.0), scale=0.2, size=(8, 3)),
+            ]
+        )
+        labels = np.repeat(np.arange(3, dtype=int), 8)
+
+        model = train_multiclass_classifier(features, labels, "regularized-qda", 0.25)
+        probabilities = model.predict_proba(features[:4])
+
+        self.assertIn("regularized-qda", CLASSIFIER_REGISTRY)
+        self.assertEqual(model.model.reg_param, 0.25)
+        self.assertEqual(probabilities.shape, (4, 3))
+        np.testing.assert_allclose(np.sum(probabilities, axis=1), np.ones(4))
+
+    def test_regularized_qda_rejects_invalid_regularization(self):
+        with self.assertRaisesRegex(ValueError, "regularized-qda classifier_param"):
+            train_multiclass_classifier(self.features, self.labels, "regularized-qda", 1.5)
 
     def test_weighted_multinomial_logistic_trains(self):
         features = np.asarray(
