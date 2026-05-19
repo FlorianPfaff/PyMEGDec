@@ -12,6 +12,7 @@ from pymegdec.stimulus_cross_subject import (
     CLASSIFIER_AUTO_PARAM_GRIDS,
     COMPONENTS_PCA_AUTO_GRID,
     CrossSubjectStimulusConfig,
+    TARGET_COVARIANCE_RECOLOR_ALIGNMENT,
     evaluate_cross_subject_stimulus_smoke,
     evaluate_nested_cross_subject_stimulus,
     export_nested_cross_subject_stimulus,
@@ -182,6 +183,35 @@ class TestStimulusCrossSubject(unittest.TestCase):
         self.assertEqual(feature_set.features.shape, (2, 6))
         np.testing.assert_allclose(feature_set.features[0], np.asarray([2.0, 4.0, 2.0, 4.0, 1.0, 2.0]))
         np.testing.assert_allclose(feature_set.features[1], np.asarray([3.0, 6.0, 2.0, 4.0, 1.0, 2.0]))
+
+    def test_sensor_mean_slope_std_halves_keeps_compact_temporal_profile(self):
+        time = np.asarray([-0.5, 0.0, 0.1, 0.2], dtype=float)
+        trials = [
+            [[0.0, 0.0, 1.0, 3.0], [0.0, 0.0, 2.0, 6.0]],
+            [[0.0, 0.0, 2.0, 4.0], [0.0, 0.0, 4.0, 8.0]],
+        ]
+        data_by_participant = {1: _mat_data_from_trials([1, 2], trials, time)}
+        config = CrossSubjectStimulusConfig(
+            window_center=0.15,
+            window_size=0.1,
+            feature_mode="sensor_mean_slope_std_halves",
+            normalization="none",
+            components_pca=float("inf"),
+            chance_classes=2,
+        )
+
+        with patch("pymegdec.stimulus_cross_subject.sio.loadmat", side_effect=_loadmat_side_effect(data_by_participant)):
+            feature_set = load_participant_stimulus_features("unused", 1, config=config)
+
+        self.assertEqual(feature_set.features.shape, (2, 10))
+        np.testing.assert_allclose(
+            feature_set.features[0],
+            np.asarray([2.0, 4.0, 2.0, 4.0, 1.0, 2.0, 1.0, 2.0, 3.0, 6.0]),
+        )
+        np.testing.assert_allclose(
+            feature_set.features[1],
+            np.asarray([3.0, 6.0, 2.0, 4.0, 1.0, 2.0, 2.0, 4.0, 4.0, 8.0]),
+        )
 
     def test_sensor_mean_slope_supports_baseline_whitening(self):
         time = np.asarray([-0.5, 0.0, 0.1, 0.2], dtype=float)
@@ -389,6 +419,23 @@ class TestStimulusCrossSubject(unittest.TestCase):
         )
 
         self.assertEqual(tuple(config.components_pca for config in candidate_configs), (32, 64, 128, 256))
+
+    def test_rich_time_feature_preset_expands_for_nested_candidate_grid(self):
+        candidate_configs = make_cross_subject_candidate_configs(
+            window_centers=(0.2,),
+            window_size=0.1,
+            feature_modes=("rich-time",),
+            normalizations=("none",),
+            classifiers=("multiclass-svm",),
+            classifier_params=(0.5,),
+            components_pca_values=(64,),
+        )
+
+        self.assertEqual(
+            tuple(config.feature_mode for config in candidate_configs),
+            ("sensor_mean", "sensor_mean_slope", "sensor_mean_slope_std", "sensor_mean_slope_std_halves", "sensor_flat"),
+        )
+        self.assertEqual(len({config.feature_mode for config in candidate_configs}), len(candidate_configs))
 
     def test_evaluate_cross_subject_stimulus_smoke(self):
         data_by_participant = {
@@ -785,6 +832,68 @@ class TestStimulusCrossSubject(unittest.TestCase):
         self.assertEqual({row["alignment"] for row in artifacts["inner_validation"]}, {"none", "train_class_procrustes"})
         self.assertIn("selected_alignment_counts", artifacts["group_summary"][0])
         self.assertTrue(all("alignment_common_classes" in row for row in artifacts["outer"]))
+
+    def test_target_covariance_recolor_alignment_uses_unlabeled_target_distribution(self):
+        rng = np.random.default_rng(0)
+        base = rng.normal(size=(80, 2))
+        train_a = base @ np.asarray([[2.0, 0.2], [0.0, 0.5]]) + np.asarray([10.0, -4.0])
+        train_b = base @ np.asarray([[0.4, -0.1], [0.8, 1.7]]) + np.asarray([-5.0, 3.0])
+        test_features = base @ np.asarray([[1.5, 0.3], [-0.2, 0.6]]) + np.asarray([25.0, 30.0])
+        labels = np.tile(np.asarray([1, 2], dtype=int), 40)
+
+        def feature_set(participant, features):
+            return cross_subject.ParticipantFeatureSet(
+                participant=participant,
+                labels=labels,
+                features=np.asarray(features, dtype=float),
+                normalization="none",
+                baseline_features=None,
+                baseline_feature_mean=None,
+                baseline_feature_std=None,
+                baseline_whitening_matrix=None,
+                n_channels=2,
+                n_window_samples=1,
+                n_baseline_samples=0,
+                max_trials_per_class_per_participant=None,
+            )
+
+        train_sets = [feature_set(1, train_a), feature_set(2, train_b)]
+        config = cross_subject._normalized_config(  # pylint: disable=protected-access
+            CrossSubjectStimulusConfig(
+                normalization="none",
+                alignment="unsupervised-covariance",
+                components_pca=float("inf"),
+                chance_classes=2,
+            )
+        )
+
+        aligned_train, alignment_model = cross_subject._align_training_features_by_subject(  # pylint: disable=protected-access
+            train_sets,
+            [feature_set.features for feature_set in train_sets],
+            [feature_set.labels for feature_set in train_sets],
+            config,
+        )
+
+        expected_center = np.mean(np.stack([np.mean(train_a, axis=0), np.mean(train_b, axis=0)], axis=0), axis=0)
+        self.assertEqual(config.alignment, TARGET_COVARIANCE_RECOLOR_ALIGNMENT)
+        self.assertEqual(alignment_model["metadata"]["alignment"], TARGET_COVARIANCE_RECOLOR_ALIGNMENT)
+        self.assertEqual(alignment_model["metadata"]["common_classes"], "")
+        self.assertEqual(alignment_model["metadata"]["aligned_participants"], "1,2")
+        for aligned in aligned_train:
+            np.testing.assert_allclose(np.mean(aligned, axis=0), expected_center, atol=1e-10)
+            self.assertTrue(np.all(np.isfinite(aligned)))
+
+        aligned_test, test_metadata = cross_subject._align_test_features_by_subject(  # pylint: disable=protected-access
+            test_features,
+            feature_set(3, test_features),
+            config,
+            alignment_model,
+        )
+
+        np.testing.assert_allclose(np.mean(aligned_test, axis=0), expected_center, atol=1e-10)
+        self.assertTrue(np.all(np.isfinite(aligned_test)))
+        self.assertEqual(test_metadata["test_transform"], TARGET_COVARIANCE_RECOLOR_ALIGNMENT)
+        self.assertEqual(test_metadata["target_centering"], "unlabeled_target_features")
 
     def test_nested_cross_subject_label_shuffle_control_marks_outputs(self):
         data_by_participant = {

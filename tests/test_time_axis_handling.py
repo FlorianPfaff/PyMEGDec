@@ -47,8 +47,18 @@ class TestTimeAxisHandling(unittest.TestCase):
 
         stimuli, null = extract_windows(data, (-0.1, 0.1), (np.nan, np.nan))
 
-        np.testing.assert_array_equal(stimuli[0].ravel(), [1, 2, 3])
-        np.testing.assert_array_equal(stimuli[1].ravel(), [12, 13, 14])
+        np.testing.assert_array_equal(stimuli[0].ravel(), [1, 2])
+        np.testing.assert_array_equal(stimuli[1].ravel(), [12, 13])
+        self.assertEqual(null, [])
+
+    def test_extract_windows_uses_duration_not_closed_endpoint_count(self):
+        time = np.array([[-0.1, 0.0, 0.1, 0.2]])
+        trial = np.array([[0, 1, 2, 3]], dtype=float)
+        data = _data([trial], [time])
+
+        stimuli, null = extract_windows(data, (0.0, 0.1), (np.nan, np.nan))
+
+        np.testing.assert_array_equal(stimuli[0].ravel(), [1])
         self.assertEqual(null, [])
 
     def test_downsample_uses_each_trial_time_support_without_extrapolation(self):

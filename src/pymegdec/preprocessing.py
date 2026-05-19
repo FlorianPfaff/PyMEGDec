@@ -241,18 +241,22 @@ def _regular_time_grid_within_support(time, step):
 def _nearest_window_slice(time, time_window, trial_idx, window_name):
     start, stop = time_window
     _require_window_supported(time, start, stop, trial_idx, window_name)
-    begin_index = int(np.argmin(np.abs(time - start)))
-    end_index = int(np.argmin(np.abs(time - stop)))
-    if end_index < begin_index:
+
+    # Treat windows as half-open intervals [start, stop).  This makes
+    # ``stop - start`` the actual feature duration and avoids selecting one
+    # extra sample whenever the stop time lies exactly on the sampling grid.
+    begin_index = _first_sample_at_or_after(time, start)
+    end_index = _first_sample_at_or_after(time, stop)
+    if end_index <= begin_index:
         raise ValueError(f"{window_name.capitalize()} window is empty for trial {trial_idx}.")
-    return slice(begin_index, end_index + 1)
+    return slice(begin_index, end_index)
 
 
 def _matching_sample_window_slice(time, start, sample_count, trial_idx, window_name):
     if sample_count <= 0:
         raise ValueError(f"{window_name.capitalize()} window sample count must be positive.")
     _require_time_supported(time, start, trial_idx, window_name)
-    begin_index = int(np.argmin(np.abs(time - start)))
+    begin_index = _first_sample_at_or_after(time, start)
     end_index = begin_index + int(sample_count)
     if end_index > time.size:
         raise ValueError(f"{window_name.capitalize()} window extends beyond trial {trial_idx}'s time support.")
@@ -270,10 +274,22 @@ def _require_time_supported(time, value, trial_idx, window_name):
         raise ValueError(f"{window_name.capitalize()} window is outside trial {trial_idx}'s time support.")
 
 
+def _first_sample_at_or_after(time, value):
+    tolerance = _time_coordinate_tolerance(time)
+    return int(np.searchsorted(time, value - tolerance, side="left"))
+
+
 def _time_support_tolerance(time):
     if time.size < 2:
         return 1e-12
     return 0.5 * float(np.median(np.diff(time))) + 1e-12
+
+
+def _time_coordinate_tolerance(time):
+    if time.size == 0:
+        return 1e-12
+    scale = max(1.0, float(np.max(np.abs(time))))
+    return 16.0 * np.finfo(float).eps * scale
 
 
 def _require_consistent_feature_size(feature, expected_size, trial_idx, window_name):

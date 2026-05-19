@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass as _dataclass
-from dataclasses import replace as _replace
 import typing as _typing
 
 import numpy as _np
@@ -24,6 +23,7 @@ DEFAULT_ONSET_MIN_CONSECUTIVE = _core.DEFAULT_ONSET_MIN_CONSECUTIVE
 DEFAULT_ONSET_MIN_DURATION = _core.DEFAULT_ONSET_MIN_DURATION
 DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION = _core.DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION
 ONSET_SCORE_TYPE_PREDICTED_CLASS = "predicted_class_score"
+ONSET_SCORE_TYPE_TRUE_CLASS = _core.ONSET_SCORE_TYPE_TRUE_CLASS
 window_centers_from_range = _core.window_centers_from_range
 summarize_stimulus_decoding_peaks = _core.summarize_stimulus_decoding_peaks
 summarize_stimulus_prediction_diagnostics = _core.summarize_stimulus_prediction_diagnostics
@@ -315,12 +315,9 @@ def _onset_scan_config(config):
 
 
 def _config_for_core(config):
-    config = config or StimulusDecodingConfig()
-    auto_chance = _uses_auto_chance(config)
-    core_chance_classes = 1 if auto_chance else _positive_int(getattr(config, "chance_classes", None))
-    if core_chance_classes is None:
-        raise ValueError("chance_classes must be a positive integer unless chance inference is enabled.")
-    return _replace(config, chance_classes=core_chance_classes), auto_chance
+    # The private core now owns chance inference. Keep the second return value
+    # for compatibility with the wrapper call sites, but never post-patch rows.
+    return config or StimulusDecodingConfig(), False
 
 
 def _uses_auto_chance(config):
@@ -359,17 +356,19 @@ def _patch_onset_score_columns(rows):
     patched_rows = []
     for row in rows:
         patched = dict(row)
+        has_true_score = "true_class_score" in patched
         legacy_score = _to_float(patched.get("stimulus_score"))
-        predicted_score = _to_float(patched.get("predicted_class_score", legacy_score))
+        predicted_score = _to_float(patched.get("predicted_class_score", legacy_score if not has_true_score else _np.nan))
         correct = bool(patched.get("correct", False))
         true_score = _to_float(patched.get("true_class_score", predicted_score if correct else _np.nan))
         score_margin = _to_float(patched.get("score_margin", _np.nan))
-        onset_score = _to_float(patched.get("onset_score", predicted_score))
+        onset_score = _to_float(patched.get("onset_score", true_score if has_true_score else predicted_score))
+        default_score_type = ONSET_SCORE_TYPE_TRUE_CLASS if has_true_score else ONSET_SCORE_TYPE_PREDICTED_CLASS
         patched["predicted_class_score"] = predicted_score
         patched["true_class_score"] = true_score
         patched["score_margin"] = score_margin
         patched["onset_score"] = onset_score
-        patched["onset_score_type"] = patched.get("onset_score_type") or ONSET_SCORE_TYPE_PREDICTED_CLASS
+        patched["onset_score_type"] = patched.get("onset_score_type") or default_score_type
         patched["stimulus_score"] = legacy_score if _np.isfinite(legacy_score) else onset_score
         patched_rows.append(patched)
     return patched_rows
@@ -381,12 +380,16 @@ def _patch_onset_event_score_columns(rows):
     patched_rows = []
     for row in rows:
         patched = dict(row)
+        has_true_score = "true_class_score_at_detection" in patched
         detection_score = _to_float(patched.get("stimulus_score_at_detection"))
-        predicted_score = _to_float(patched.get("predicted_class_score_at_detection", detection_score))
+        predicted_score = _to_float(
+            patched.get("predicted_class_score_at_detection", detection_score if not has_true_score else _np.nan)
+        )
         correct = bool(patched.get("correct_detected_stimulus", False))
         true_score = _to_float(patched.get("true_class_score_at_detection", predicted_score if correct else _np.nan))
-        patched["onset_score_at_detection"] = _to_float(patched.get("onset_score_at_detection", predicted_score))
-        patched["onset_score_type"] = patched.get("onset_score_type") or ONSET_SCORE_TYPE_PREDICTED_CLASS
+        patched["onset_score_at_detection"] = _to_float(patched.get("onset_score_at_detection", true_score if has_true_score else predicted_score))
+        default_score_type = ONSET_SCORE_TYPE_TRUE_CLASS if has_true_score else ONSET_SCORE_TYPE_PREDICTED_CLASS
+        patched["onset_score_type"] = patched.get("onset_score_type") or default_score_type
         patched["predicted_class_score_at_detection"] = predicted_score
         patched["true_class_score_at_detection"] = true_score
         patched["score_margin_at_detection"] = _to_float(patched.get("score_margin_at_detection", _np.nan))
@@ -410,7 +413,7 @@ def summarize_stimulus_onset_scan(rows):
         margins = _finite_values(row.get("score_margin") for row in group_rows)
         summary_row.update(
             {
-                "onset_score_type": group_rows[0].get("onset_score_type", ONSET_SCORE_TYPE_PREDICTED_CLASS),
+                "onset_score_type": group_rows[0].get("onset_score_type", ONSET_SCORE_TYPE_TRUE_CLASS),
                 "mean_onset_score": _mean_or_nan(onset_scores),
                 "median_onset_score": _median_or_nan(onset_scores),
                 "mean_predicted_class_score": _mean_or_nan(predicted_scores),
@@ -439,7 +442,7 @@ def summarize_stimulus_onset_events(rows):
         true_scores = _finite_values(row.get("true_class_score_at_detection") for row in group_rows)
         summary_row.update(
             {
-                "onset_score_type": group_rows[0].get("onset_score_type", ONSET_SCORE_TYPE_PREDICTED_CLASS),
+                "onset_score_type": group_rows[0].get("onset_score_type", ONSET_SCORE_TYPE_TRUE_CLASS),
                 "onset_score_at_detection_mean": _mean_or_nan(detection_scores),
                 "predicted_class_score_at_detection_mean": _mean_or_nan(predicted_scores),
                 "true_class_score_at_detection_mean": _mean_or_nan(true_scores),
@@ -648,16 +651,13 @@ def _core_evaluate_participant_stimulus_onset_scan(
 
 
 def _install_core_private_import_fixes():
-    """Make direct private-core imports use the public chance-level semantics."""
+    """Compatibility hook retained for older imports.
 
-    _core.evaluate_time_resolved_stimulus_transfer = _core_evaluate_time_resolved_stimulus_transfer
-    _core.evaluate_participant_time_resolved_stimulus_transfer = _core_evaluate_participant_time_resolved_stimulus_transfer
-    _core.evaluate_participant_stimulus_decoding_diagnostics = _core_evaluate_participant_stimulus_decoding_diagnostics
-    _core.evaluate_participant_stimulus_temporal_generalization = _core_evaluate_participant_stimulus_temporal_generalization
-    _core.evaluate_participant_stimulus_onset_scan = _core_evaluate_participant_stimulus_onset_scan
-    _core.export_time_resolved_stimulus_decoding = export_time_resolved_stimulus_decoding
-    _core.export_stimulus_temporal_generalization = export_stimulus_temporal_generalization
-    _core.export_stimulus_onset_scan = export_stimulus_onset_scan
+    The private core now implements auto chance inference directly, so importing
+    this public module must not mutate private-core functions.
+    """
+
+    return None
 
 
 _install_core_private_import_fixes()

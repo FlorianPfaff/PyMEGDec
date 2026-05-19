@@ -20,6 +20,13 @@ DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION = "random"
 DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED = 0
 TRIAL_SELECTION_MODES = ("random", "first")
 AUTO_CLASSIFIER_PARAM_GRID_TOKEN = "auto-grid"
+TARGET_COVARIANCE_RECOLOR_ALIGNMENT = "target_covariance_recolor"
+_BASE_ALIGNMENT_MODES = tuple(_impl.ALIGNMENT_MODES)
+ALIGNMENT_MODES = (
+    (*_BASE_ALIGNMENT_MODES, TARGET_COVARIANCE_RECOLOR_ALIGNMENT)
+    if TARGET_COVARIANCE_RECOLOR_ALIGNMENT not in _BASE_ALIGNMENT_MODES
+    else _BASE_ALIGNMENT_MODES
+)
 AUTO_COMPONENTS_PCA_GRID_TOKEN = "auto-grid"
 COMPONENTS_PCA_AUTO_GRID = (32, 64, 128)
 CLASSIFIER_AUTO_PARAM_GRIDS = {
@@ -32,6 +39,11 @@ CLASSIFIER_AUTO_PARAM_GRIDS = {
     "shrinkage-lda": ("auto", 0.1, 0.5, 0.9),
     "shrinkage-prototype": (0.0, 0.25, 0.5, 0.75),
 }
+FEATURE_MODE_PRESETS = {
+    "compact_time": ("sensor_mean", "sensor_mean_slope", "sensor_mean_slope_std", "sensor_mean_slope_std_halves"),
+    "rich_time": ("sensor_mean", "sensor_mean_slope", "sensor_mean_slope_std", "sensor_mean_slope_std_halves", "sensor_flat"),
+}
+COVARIANCE_ALIGNMENT_SHRINKAGE = 0.1
 
 _BASE_CROSS_SUBJECT_CONFIG = _impl.CrossSubjectStimulusConfig
 _BASE_PARTICIPANT_FEATURE_SET = _impl.ParticipantFeatureSet
@@ -139,9 +151,102 @@ def _test_alignment_metadata(test_transform, target_centering):
     return {"test_transform": test_transform, "target_centering": target_centering}
 
 
+def _fit_target_covariance_recolor_alignment(features_by_subject):
+    features_by_subject = tuple(np.asarray(features, dtype=float) for features in features_by_subject)
+    if not features_by_subject:
+        return tuple(), None, tuple()
+
+    _validate_same_feature_width(features_by_subject)
+    subject_centers = tuple(np.mean(features, axis=0) for features in features_by_subject)
+    subject_covariances = tuple(_feature_covariance(features) for features in features_by_subject)
+    target_center = np.mean(np.stack(subject_centers, axis=0), axis=0)
+    target_covariance = _regularized_covariance(np.mean(np.stack(subject_covariances, axis=0), axis=0))
+    transforms = tuple(
+        _feature_covariance_recolor_transform(
+            features,
+            target_center=target_center,
+            target_covariance=target_covariance,
+        )
+        for features in features_by_subject
+    )
+    aligned_features = tuple(
+        _apply_feature_space_affine_transform(features, transform)
+        for features, transform in zip(features_by_subject, transforms, strict=True)
+    )
+    return aligned_features, _target_covariance_template(target_center, target_covariance), transforms
+
+
+def _validate_same_feature_width(features_by_subject):
+    widths = []
+    for features in features_by_subject:
+        if features.ndim != 2:
+            raise ValueError("Covariance alignment requires two-dimensional feature matrices.")
+        widths.append(int(features.shape[1]))
+    if len(set(widths)) > 1:
+        raise ValueError("Covariance alignment requires all participants to have the same feature width.")
+
+
+def _target_covariance_template(target_center, target_covariance):
+    return {
+        "target_center": np.asarray(target_center, dtype=float),
+        "target_covariance": np.asarray(target_covariance, dtype=float),
+    }
+
+
+def _feature_covariance_recolor_transform(features, *, target_center, target_covariance):
+    features = np.asarray(features, dtype=float)
+    source_center = np.mean(features, axis=0)
+    source_covariance = _feature_covariance(features)
+    transform_matrix = _impl._whitening_matrix(source_covariance) @ _covariance_square_root(target_covariance)
+    return {
+        "source_center": source_center,
+        "target_center": np.asarray(target_center, dtype=float),
+        "matrix": transform_matrix,
+        "source_covariance": source_covariance,
+        "target_covariance": np.asarray(target_covariance, dtype=float),
+    }
+
+
+def _feature_covariance(features):
+    return _regularized_covariance(_impl._covariance_matrix(features))
+
+
+def _regularized_covariance(covariance):
+    covariance = np.asarray(covariance, dtype=float)
+    covariance = _impl._shrink_covariance(covariance, shrinkage=COVARIANCE_ALIGNMENT_SHRINKAGE)
+    return 0.5 * (covariance + covariance.T)
+
+
+def _covariance_square_root(covariance):
+    covariance = np.asarray(covariance, dtype=float)
+    covariance = 0.5 * (covariance + covariance.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    eigen_floor = max(float(np.max(eigenvalues)) * _impl.BASELINE_WHITENING_EIGENVALUE_FLOOR, 1e-12)
+    sqrt_eigenvalues = np.sqrt(np.maximum(eigenvalues, eigen_floor))
+    square_root = (eigenvectors * sqrt_eigenvalues) @ eigenvectors.T
+    return 0.5 * (square_root + square_root.T)
+
+
+def _apply_feature_space_affine_transform(features, transform):
+    return (np.asarray(features, dtype=float) - transform["source_center"]) @ transform["matrix"] + transform["target_center"]
+
+
 def _align_test_features_by_subject(test_features, test_set, config, alignment_model):
     if config.alignment == "none":
         return test_features, _test_alignment_metadata("none", "none")
+    if config.alignment == TARGET_COVARIANCE_RECOLOR_ALIGNMENT:
+        target_template = alignment_model.get("target_transform")
+        if target_template is None:
+            return test_features, _test_alignment_metadata("none", "none")
+        test_transform = _feature_covariance_recolor_transform(
+            test_features,
+            target_center=target_template["target_center"],
+            target_covariance=target_template["target_covariance"],
+        )
+        return (
+            _apply_feature_space_affine_transform(test_features, test_transform),
+            _test_alignment_metadata(TARGET_COVARIANCE_RECOLOR_ALIGNMENT, "unlabeled_target_features"),
+        )
     if config.alignment != "train_class_procrustes":
         raise ValueError(f"Unsupported alignment: {config.alignment}")
 
@@ -202,6 +307,8 @@ def make_cross_subject_candidate_configs(  # pylint: disable=too-many-arguments
 ):
     """Build a candidate grid for nested cross-subject model selection."""
 
+    feature_modes = _expand_feature_modes(feature_modes)
+
     return tuple(
         CrossSubjectStimulusConfig(
             window_center=window_center,
@@ -231,6 +338,27 @@ def make_cross_subject_candidate_configs(  # pylint: disable=too-many-arguments
         )
         for classifier_param in _classifier_params_for_classifier(classifier, classifier_params)
     )
+
+
+def _expand_feature_modes(feature_modes):
+    """Expand nested-grid feature-mode presets into concrete feature modes."""
+
+    expanded: list[str] = []
+    for feature_mode in feature_modes:
+        normalized = str(feature_mode).strip().lower().replace("-", "_")
+        if normalized in FEATURE_MODE_PRESETS:
+            expanded.extend(FEATURE_MODE_PRESETS[normalized])
+        else:
+            expanded.append(_impl._normalize_feature_mode(normalized))
+    return tuple(_dedupe_feature_modes(expanded))
+
+
+def _dedupe_feature_modes(feature_modes):
+    seen: set[str] = set()
+    for feature_mode in feature_modes:
+        if feature_mode not in seen:
+            seen.add(feature_mode)
+            yield feature_mode
 
 
 def _components_pca_values_for_grid(components_pca_values):
@@ -368,6 +496,15 @@ def _align_training_features_by_subject(feature_sets, features_by_subject, label
             config.alignment,
             common_classes=(),
             aligned_participants=(),
+        )
+    if config.alignment == TARGET_COVARIANCE_RECOLOR_ALIGNMENT:
+        aligned_features, target_template, transforms = _fit_target_covariance_recolor_alignment(features_by_subject)
+        return list(aligned_features), _alignment_model(
+            config.alignment,
+            common_classes=(),
+            aligned_participants=(feature_set.participant for feature_set in feature_sets),
+            transforms=transforms,
+            target_transform=target_template,
         )
     if config.alignment != "train_class_procrustes":
         raise ValueError(f"Unsupported alignment: {config.alignment}")
@@ -555,7 +692,7 @@ def _normalized_config(config):
         baseline_window=config.baseline_window,
         feature_mode=_impl._normalize_feature_mode(config.feature_mode),
         normalization=_impl._normalize_normalization(config.normalization),
-        alignment=_impl._normalize_alignment(config.alignment),
+        alignment=_normalize_alignment(config.alignment),
         classifier=config.classifier,
         classifier_param=config.classifier_param,
         components_pca=config.components_pca,
@@ -567,6 +704,21 @@ def _normalized_config(config):
         signflip_permutations=config.signflip_permutations,
         signflip_seed=config.signflip_seed,
     )
+
+
+def _normalize_alignment(value):
+    normalized = str(value).strip().lower().replace("-", "_")
+    aliases = {
+        "coral": TARGET_COVARIANCE_RECOLOR_ALIGNMENT,
+        "covariance_recolor": TARGET_COVARIANCE_RECOLOR_ALIGNMENT,
+        "covariance_recoloring": TARGET_COVARIANCE_RECOLOR_ALIGNMENT,
+        "target_covariance": TARGET_COVARIANCE_RECOLOR_ALIGNMENT,
+        "unsupervised_covariance": TARGET_COVARIANCE_RECOLOR_ALIGNMENT,
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in ALIGNMENT_MODES:
+        raise ValueError(f"alignment must be one of {ALIGNMENT_MODES}.")
+    return normalized
 
 
 def _normalize_trial_selection(value):
@@ -589,18 +741,28 @@ def _install_module_fixes():
     _impl.DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION  # type: ignore[attr-defined]
     _impl.DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED = DEFAULT_CROSS_SUBJECT_TRIAL_SELECTION_SEED  # type: ignore[attr-defined]
     _impl.TRIAL_SELECTION_MODES = TRIAL_SELECTION_MODES  # type: ignore[attr-defined]
+    _impl.TARGET_COVARIANCE_RECOLOR_ALIGNMENT = TARGET_COVARIANCE_RECOLOR_ALIGNMENT  # type: ignore[attr-defined]
+    _impl.ALIGNMENT_MODES = ALIGNMENT_MODES
+    _impl.COVARIANCE_ALIGNMENT_SHRINKAGE = COVARIANCE_ALIGNMENT_SHRINKAGE  # type: ignore[attr-defined]
     _impl.AUTO_CLASSIFIER_PARAM_GRID_TOKEN = AUTO_CLASSIFIER_PARAM_GRID_TOKEN  # type: ignore[attr-defined]
     _impl.AUTO_COMPONENTS_PCA_GRID_TOKEN = AUTO_COMPONENTS_PCA_GRID_TOKEN  # type: ignore[attr-defined]
     _impl.CLASSIFIER_AUTO_PARAM_GRIDS = CLASSIFIER_AUTO_PARAM_GRIDS  # type: ignore[attr-defined]
     _impl.COMPONENTS_PCA_AUTO_GRID = COMPONENTS_PCA_AUTO_GRID  # type: ignore[attr-defined]
+    _impl.FEATURE_MODE_PRESETS = FEATURE_MODE_PRESETS  # type: ignore[attr-defined]
     _impl.CrossSubjectStimulusConfig = CrossSubjectStimulusConfig  # type: ignore[misc]
     _impl.ParticipantFeatureSet = ParticipantFeatureSet  # type: ignore[misc]
+    _impl._fit_target_covariance_recolor_alignment = _fit_target_covariance_recolor_alignment  # type: ignore[attr-defined]
+    _impl._feature_covariance_recolor_transform = _feature_covariance_recolor_transform  # type: ignore[attr-defined]
+    _impl._apply_feature_space_affine_transform = _apply_feature_space_affine_transform  # type: ignore[attr-defined]
+    _impl._feature_covariance = _feature_covariance  # type: ignore[attr-defined]
+    _impl._covariance_square_root = _covariance_square_root  # type: ignore[attr-defined]
     _impl.make_cross_subject_candidate_configs = make_cross_subject_candidate_configs
     _impl._classifier_params_for_classifier = _classifier_params_for_classifier  # type: ignore[attr-defined]
     _impl._is_auto_classifier_param_grid = _is_auto_classifier_param_grid  # type: ignore[attr-defined]
     _impl._components_pca_values_for_grid = _components_pca_values_for_grid  # type: ignore[attr-defined]
     _impl._is_auto_components_pca_grid = _is_auto_components_pca_grid  # type: ignore[attr-defined]
     _impl.load_participant_stimulus_features = load_participant_stimulus_features
+    _impl._expand_feature_modes = _expand_feature_modes  # type: ignore[attr-defined]
     _impl.summarize_cross_subject_stimulus_smoke = summarize_cross_subject_stimulus_smoke
     _impl._ranked_label_metrics = _ranked_label_metrics
     _impl._align_training_features_by_subject = _align_training_features_by_subject
@@ -613,6 +775,7 @@ def _install_module_fixes():
     _impl._feature_set_trial_indices = _feature_set_trial_indices  # type: ignore[attr-defined]
     _impl._seed_field = _seed_field  # type: ignore[attr-defined]
     _impl._normalized_config = _normalized_config
+    _impl._normalize_alignment = _normalize_alignment
     _impl._normalize_trial_selection = _normalize_trial_selection  # type: ignore[attr-defined]
     _impl._normalize_trial_selection_seed = _normalize_trial_selection_seed  # type: ignore[attr-defined]
     _impl.CROSS_SUBJECT_PREDICTION_GROUP_COLUMNS = _prediction_group_columns_with_trial_selection(_prediction_group_columns_with_alignment())

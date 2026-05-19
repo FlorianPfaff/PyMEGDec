@@ -32,6 +32,7 @@ from reptrace.decoding.transfer import (  # pylint: disable=no-name-in-module
     evaluate_feature_transfer,
 )
 from reptrace.decoding.windowed import fit_window_model as fit_reptrace_window_model
+from reptrace.decoding.windowed import transform_window_features as transform_reptrace_window_features
 from reptrace.decoding.windowed import (
     predict_window_model as predict_reptrace_window_model,
 )
@@ -60,6 +61,7 @@ DEFAULT_ONSET_MIN_DURATION = None
 DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION = False
 ONSET_THRESHOLD_METHODS = ("point", "max_run")
 TRANSFER_DIRECTIONS = ("main-to-cue", "cue-to-main")
+ONSET_SCORE_TYPE_TRUE_CLASS = "true_class_score"
 SUMMARY_GROUP_FIELDS = (
     "control",
     "control_label",
@@ -135,7 +137,8 @@ class StimulusDecodingConfig:
     classifier_param: object = float("nan")
     components_pca: int | float = 100
     frequency_range: tuple[float, float] = (0.0, float("inf"))
-    chance_classes: int = DEFAULT_CHANCE_CLASSES
+    chance_classes: int | str | None = None
+    infer_chance_classes: bool = True
     random_state: int | None = None
     permutations: int = 0
     permutation_seed: int | None = None
@@ -261,7 +264,7 @@ def evaluate_participant_stimulus_temporal_generalization(
             config,
         ),
         predict_labels=lambda model_bundle, window: _predict_window_model(model_bundle, window.features)[0],
-        chance_accuracy=1.0 / config.chance_classes,
+        chance_accuracy=_chance_accuracy_for_labels(config, labels_validation),
         metadata={
             "participant": participant,
             "variant": variant,
@@ -350,6 +353,7 @@ def summarize_stimulus_decoding(rows):
         "accuracy",
         group_fields,
         chance_column="chance_accuracy",
+        chance_class_columns=("n_validation_classes",),
     )
     grouped = defaultdict(list)
     for row in rows:
@@ -366,7 +370,7 @@ def summarize_stimulus_decoding(rows):
         n_with_permutation = sum(np.isfinite(permutation_p))
         significant_05 = sum(value < 0.05 for value in permutation_p if np.isfinite(value))
         significant_01 = sum(value < 0.01 for value in permutation_p if np.isfinite(value))
-        chance_accuracy = _to_float(group_rows[0]["chance_accuracy"])
+        chance_accuracy = _to_float(base_summary.get("chance_accuracy_mean", group_rows[0]["chance_accuracy"]))
         summary_row = dict(zip(group_fields, key))
         summary_row.update(
             {
@@ -483,6 +487,7 @@ def summarize_stimulus_temporal_generalization(rows):
         "accuracy",
         group_fields,
         chance_column="chance_accuracy",
+        chance_class_columns=("n_validation_classes",),
     )
     grouped = defaultdict(list)
     for row in rows:
@@ -495,7 +500,7 @@ def summarize_stimulus_temporal_generalization(rows):
         accuracies = [_to_float(row["accuracy"]) for row in group_rows]
         std = _legacy_std(base_summary["accuracy_std"], accuracies)
         sem = _legacy_sem(base_summary["accuracy_sem"], accuracies)
-        chance_accuracy = _to_float(group_rows[0]["chance_accuracy"])
+        chance_accuracy = _to_float(base_summary.get("chance_accuracy_mean", group_rows[0]["chance_accuracy"]))
         diagonal_values = {_window_center_key(row["train_window_center_s"]) == _window_center_key(row["test_window_center_s"]) for row in group_rows}
         summary_row = dict(zip(group_fields, key))
         summary_row.update(
@@ -661,7 +666,9 @@ def evaluate_participant_stimulus_onset_scan(
     for scan_window_center in config.window_centers:
         scan_window_center = float(scan_window_center)
         validation_features = _validation_features_for_window(validation_data, scan_window_center, config)
-        predictions, scores = _predict_window_model(model_bundle, validation_features)
+        predictions, predicted_scores = _predict_window_model(model_bundle, validation_features)
+        true_scores = _true_label_window_scores(model_bundle, validation_features, labels_validation)
+        score_margins = _true_label_score_margins(model_bundle, validation_features, labels_validation)
         scan_rows.extend(
             _stimulus_onset_scan_rows(
                 participant,
@@ -670,7 +677,9 @@ def evaluate_participant_stimulus_onset_scan(
                 scan_window_center,
                 labels_validation,
                 predictions,
-                scores,
+                predicted_scores,
+                true_scores,
+                score_margins,
                 classifier_param,
                 model_bundle,
                 config,
@@ -953,6 +962,71 @@ def _predict_window_model(model_bundle, features):
     return predict_reptrace_window_model(model_bundle, features)
 
 
+def _true_label_window_scores(model_bundle, features, true_labels):
+    transformed_features = transform_reptrace_window_features(model_bundle, features)
+    return _scores_for_labels(model_bundle.model, transformed_features, true_labels)
+
+
+def _true_label_score_margins(model_bundle, features, true_labels):
+    transformed_features = transform_reptrace_window_features(model_bundle, features)
+    score_matrix = _classifier_score_matrix(model_bundle.model, transformed_features)
+    if score_matrix is None:
+        return np.full(len(true_labels), np.nan, dtype=float)
+
+    true_scores = _scores_for_labels_from_matrix(model_bundle.model, score_matrix, true_labels)
+    margins = np.full(score_matrix.shape[0], np.nan, dtype=float)
+    for row_index, (label, true_score) in enumerate(zip(true_labels, true_scores)):
+        if not np.isfinite(true_score):
+            continue
+        label_index = _class_index(model_bundle.model, label)
+        if label_index is None:
+            continue
+        other_scores = np.delete(score_matrix[row_index], label_index)
+        finite_other_scores = other_scores[np.isfinite(other_scores)]
+        if finite_other_scores.size:
+            margins[row_index] = true_score - float(np.max(finite_other_scores))
+    return margins
+
+
+def _scores_for_labels(model, features, labels):
+    score_matrix = _classifier_score_matrix(model, features)
+    if score_matrix is None:
+        return np.full(len(labels), np.nan, dtype=float)
+    return _scores_for_labels_from_matrix(model, score_matrix, labels)
+
+
+def _scores_for_labels_from_matrix(model, score_matrix, labels):
+    labels = np.asarray(labels)
+    scores = np.full(labels.shape[0], np.nan, dtype=float)
+    for row_index, label in enumerate(labels):
+        label_index = _class_index(model, label)
+        if label_index is not None:
+            scores[row_index] = score_matrix[row_index, label_index]
+    return scores
+
+
+def _classifier_score_matrix(model, features):
+    if hasattr(model, "decision_function"):
+        scores = np.asarray(model.decision_function(features), dtype=float)
+        if scores.ndim == 1:
+            classes = np.asarray(getattr(model, "classes_", (0, 1)))
+            if classes.shape[0] == 2:
+                return np.column_stack((-scores, scores))
+            return scores.reshape(-1, 1)
+        return scores
+    if hasattr(model, "predict_proba"):
+        return np.asarray(model.predict_proba(features), dtype=float)
+    return None
+
+
+def _class_index(model, label):
+    classes = np.asarray(getattr(model, "classes_", ()))
+    if classes.size == 0:
+        return None
+    matches = np.flatnonzero(classes == label)
+    return int(matches[0]) if matches.size else None
+
+
 # pylint: disable-next=too-many-arguments,too-many-positional-arguments
 def _stimulus_onset_scan_rows(
     participant,
@@ -961,7 +1035,9 @@ def _stimulus_onset_scan_rows(
     scan_window_center,
     labels_validation,
     predictions,
-    scores,
+    predicted_scores,
+    true_scores,
+    score_margins,
     classifier_param,
     model_bundle,
     config,
@@ -969,9 +1045,10 @@ def _stimulus_onset_scan_rows(
     threshold_quantile,
 ):
     scan_window = _centered_window(scan_window_center, config.window_size)
-    chance_accuracy = 1.0 / config.chance_classes
+    chance_accuracy = _chance_accuracy_for_labels(config, labels_validation)
     rows = []
-    for trial_idx, (true_label, predicted_label, score) in enumerate(zip(labels_validation, predictions, scores)):
+    score_rows = zip(labels_validation, predictions, predicted_scores, true_scores, score_margins)
+    for trial_idx, (true_label, predicted_label, predicted_score, true_score, score_margin) in enumerate(score_rows):
         true_stimulus = _display_stimulus_label(true_label, variant)
         predicted_stimulus = _display_stimulus_label(predicted_label, variant)
         rows.append(
@@ -995,7 +1072,12 @@ def _stimulus_onset_scan_rows(
                 "true_stimulus_id": true_stimulus,
                 "predicted_stimulus_id": predicted_stimulus,
                 "correct": bool(predicted_label == true_label),
-                "stimulus_score": float(score),
+                "stimulus_score": float(true_score),
+                "onset_score": float(true_score),
+                "onset_score_type": ONSET_SCORE_TYPE_TRUE_CLASS,
+                "true_class_score": float(true_score),
+                "predicted_class_score": float(predicted_score),
+                "score_margin": float(score_margin),
                 "score_threshold": np.nan,
                 "above_threshold": False,
                 "threshold_quantile": threshold_quantile,
@@ -1097,14 +1179,30 @@ def _stimulus_onset_event_rows_from_reptrace(
         detection_start=detection_start_s,
     )
     reference_rows = observations.sort_values(["sequence_id", "time"]).groupby("sequence_id", sort=True).first().to_dict(orient="index")
-    return [_stimulus_onset_event_row_from_reptrace(reference_rows[event["sequence_id"]], event, detection_start_s) for event in events.to_dict(orient="records")]
+    detection_rows = _onset_detection_rows_by_sequence_and_time(observations)
+    return [
+        _stimulus_onset_event_row_from_reptrace(
+            reference_rows[event["sequence_id"]],
+            event,
+            detection_start_s,
+            detection_rows,
+        )
+        for event in events.to_dict(orient="records")
+    ]
 
 
-def _stimulus_onset_event_row_from_reptrace(reference_row, event, detection_start_s):
+def _onset_detection_rows_by_sequence_and_time(observations):
+    return {(row["sequence_id"], row["time"]): row for row in observations.to_dict(orient="records")}
+
+
+def _stimulus_onset_event_row_from_reptrace(reference_row, event, detection_start_s, detection_rows=None):
     detected = bool(event["detected"])
     min_duration = event.get("min_duration", np.nan)
     if min_duration is None:
         min_duration = np.nan
+    detection_row = {}
+    if detected and detection_rows:
+        detection_row = detection_rows.get((reference_row["sequence_id"], event["detection_time"]), {})
     return {
         "participant": reference_row["participant"],
         "variant": reference_row["variant"],
@@ -1127,6 +1225,11 @@ def _stimulus_onset_event_row_from_reptrace(reference_row, event, detection_star
         "predicted_stimulus_id_at_detection": event["predicted_class_at_detection"] if detected else np.nan,
         "correct_detected_stimulus": bool(event["is_correct_at_detection"]) if detected else False,
         "stimulus_score_at_detection": event["score_at_detection"],
+        "onset_score_at_detection": event["score_at_detection"],
+        "onset_score_type": detection_row.get("onset_score_type", ONSET_SCORE_TYPE_TRUE_CLASS),
+        "true_class_score_at_detection": detection_row.get("true_class_score", np.nan),
+        "predicted_class_score_at_detection": detection_row.get("predicted_class_score", np.nan),
+        "score_margin_at_detection": detection_row.get("score_margin", np.nan),
         "score_threshold": event["score_threshold"],
         "threshold_quantile": event["threshold_quantile"],
         "threshold_window_start_s": event["threshold_window_start"],
@@ -1196,7 +1299,7 @@ def _evaluate_window(
     predictions = decoding_result.predictions
     accuracy = decoding_result.accuracy
     permutation_accuracy = decoding_result.permutation_accuracy
-    chance_accuracy = 1.0 / config.chance_classes
+    chance_accuracy = _chance_accuracy_for_labels(config, labels_validation)
     variant = "without_null" if np.isnan(config.null_window_center) else "with_null"
     null_prediction_rate = float(np.mean(predictions == 0)) if variant == "with_null" else np.nan
 
@@ -1311,6 +1414,61 @@ def _window_center_key(value):
 
 def _window_center_set(values):
     return {_window_center_key(value) for value in values}
+
+
+_AUTO_CHANCE_CLASS_ALIASES = {"auto", "actual", "infer", "inferred"}
+
+
+def _chance_accuracy_for_labels(config, labels) -> float:
+    class_count = _chance_class_count_for_labels(config, labels)
+    if class_count <= 0:
+        raise ValueError("chance_classes must be positive or infer from at least one validation label.")
+    return 1.0 / class_count
+
+
+def _chance_class_count_for_labels(config, labels) -> int:
+    explicit_class_count = _explicit_chance_class_count(config)
+    if explicit_class_count is not None:
+        return explicit_class_count
+    return int(len(np.unique(np.asarray(labels))))
+
+
+def _explicit_chance_class_count(config) -> int | None:
+    """Return an explicit chance-class override, or None for validation-label inference."""
+
+    infer_chance_classes = bool(getattr(config, "infer_chance_classes", True))
+    chance_classes = getattr(config, "chance_classes", None)
+    if not infer_chance_classes:
+        parsed = _positive_int(chance_classes)
+        if parsed is None:
+            raise ValueError("chance_classes must be a positive integer when chance inference is disabled.")
+        return parsed
+
+    if chance_classes is None:
+        return None
+    if isinstance(chance_classes, str) and chance_classes.strip().lower() in _AUTO_CHANCE_CLASS_ALIASES:
+        return None
+
+    parsed = _positive_int(chance_classes)
+    if parsed is None:
+        raise ValueError(
+            "chance_classes must be a positive integer or one of "
+            f"{sorted(_AUTO_CHANCE_CLASS_ALIASES)} when chance inference is enabled."
+        )
+
+    # Preserve the historical CLI/workflow default without reporting 1/16 for
+    # analyses that only evaluate a subset of the full stimulus set.
+    if parsed == DEFAULT_CHANCE_CLASSES:
+        return None
+    return parsed
+
+
+def _positive_int(value) -> int | None:
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _to_float(value):

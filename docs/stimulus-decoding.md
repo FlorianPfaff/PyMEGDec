@@ -72,7 +72,7 @@ pymegdec stimulus cross-subject-nested \
   --window-size 0.1 \
   --feature-modes sensor_flat \
   --normalizations subject_baseline_z,subject_trial_z,subject_baseline_whiten \
-  --alignments none,train_class_procrustes \
+  --alignments none,train_class_procrustes,target_covariance_recolor \
   --classifiers multinomial-logistic,shrinkage-lda,multiclass-svm \
   --classifier-params default \
   --components-pca-values 64 \
@@ -109,6 +109,14 @@ shared template, then evaluates the held-out participant without using that
 participant's labels for alignment. This is a conservative first alignment
 control; supervised held-out-subject alignment would require a separate labeled
 calibration design.
+
+The `target_covariance_recolor` alignment mode is a label-free target-adaptation
+control for cross-person distribution shift. It aligns each source participant's
+feature mean and covariance to a train-derived group template and, at scoring
+time, uses the held-out participant's unlabeled feature distribution to whiten
+and recolor that participant into the same template. Report it as transductive
+or unlabeled-target-adapted rather than as strict zero-shot LOSO, because the
+scored participant's feature distribution is used even though labels are not.
 
 ## Cue-calibrated cross-subject benchmark
 

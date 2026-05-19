@@ -286,6 +286,42 @@ class TestStimulusDecoding(unittest.TestCase):
         self.assertTrue(all(row["detection_window_center_s"] == 0.0 for row in event_rows))
         self.assertTrue(all(row["correct_detected_stimulus"] for row in event_rows))
 
+    def test_onset_scan_thresholds_true_class_score_not_predicted_confidence(self):
+        labels = [1, 2, 1, 2]
+        train_data = _mat_data_matrix(labels, [[-2.0, -2.0], [2.0, 2.0], [-1.0, -1.0], [1.0, 1.0]], [-0.1, 0.0])
+        validation_data = _mat_data_matrix(labels, [[1.5, 1.5], [-1.5, -1.5], [0.5, 0.5], [-0.5, -0.5]], [-0.1, 0.0])
+        config = StimulusDecodingConfig(
+            window_centers=(-0.1, 0.0),
+            window_size=0.0,
+            components_pca=float("inf"),
+            chance_classes=2,
+        )
+
+        with patch(
+            "pymegdec.stimulus_decoding.sio.loadmat",
+            side_effect=[
+                {"data": np.array([train_data], dtype=object)},
+                {"data": np.array([validation_data], dtype=object)},
+            ],
+        ):
+            scan_rows, event_rows = evaluate_participant_stimulus_onset_scan(
+                "unused",
+                1,
+                config=config,
+                train_window_center=0.0,
+                threshold_window=(-0.1, -0.1),
+                threshold_quantile=0.0,
+            )
+
+        self.assertTrue(all(row["onset_score_type"] == "true_class_score" for row in scan_rows))
+        self.assertTrue(any(row["predicted_label"] != row["true_label"] for row in scan_rows))
+        self.assertTrue(all(row["stimulus_score"] == row["true_class_score"] for row in scan_rows))
+        self.assertTrue(all(row["onset_score"] == row["true_class_score"] for row in scan_rows))
+        self.assertTrue(all(row["predicted_class_score"] >= row["true_class_score"] for row in scan_rows))
+        self.assertTrue(all(row["score_margin"] <= 0.0 for row in scan_rows))
+        self.assertTrue(all(row["onset_score_type"] == "true_class_score" for row in event_rows))
+        self.assertTrue(all(row["stimulus_score_at_detection"] == row["true_class_score_at_detection"] for row in event_rows))
+
     def test_onset_scan_sustained_run_rejects_one_bin_spike(self):
         scan_rows = [
             _onset_scan_row(-0.10, 0.10),

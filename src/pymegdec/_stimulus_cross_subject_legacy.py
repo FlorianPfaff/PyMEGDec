@@ -26,6 +26,21 @@ from reptrace.decoding.windowed import (
 from reptrace.decoding.windowed import (
     transform_window_features as transform_reptrace_window_features,
 )
+from reptrace.decoding.normalization import (
+    BASELINE_WHITENING_EIGENVALUE_FLOOR as REPTRACE_BASELINE_WHITENING_EIGENVALUE_FLOOR,
+    BASELINE_WHITENING_SHRINKAGE as REPTRACE_BASELINE_WHITENING_SHRINKAGE,
+    NORMALIZATION_MODES as REPTRACE_NORMALIZATION_MODES,
+    baseline_channel_whitening_matrix_from_features as reptrace_baseline_channel_whitening_matrix_from_features,
+    baseline_whiten_feature_blocks as reptrace_baseline_whiten_feature_blocks,
+    baseline_whiten_features as reptrace_baseline_whiten_features,
+    covariance_matrix as reptrace_covariance_matrix,
+    nonzero_std as reptrace_nonzero_std,
+    normalize_normalization as reptrace_normalize_normalization,
+    normalize_subject_features as reptrace_normalize_subject_features,
+    shrink_covariance as reptrace_shrink_covariance,
+    trial_zscore_features as reptrace_trial_zscore_features,
+    whitening_matrix as reptrace_whitening_matrix,
+)
 from reptrace.metrics.confusion import (
     confusion_category_enrichment,
     confusion_category_matrix,
@@ -57,11 +72,15 @@ ENSEMBLE_SCORE_NORMALIZATION_MODES = ("row_z_softmax", "rank_softmax")
 SELECTION_ENSEMBLE_DIVERSITY_MODES = ("none", "window", "classifier", "window_classifier", "full_config")
 NESTED_SCORE_ENSEMBLE_CLASSIFIER = "nested_topk_score_ensemble"
 NESTED_SCORE_ENSEMBLE_NORMALIZATION = DEFAULT_CROSS_SUBJECT_ENSEMBLE_SCORE_NORMALIZATION
-FEATURE_MODES = ("sensor_mean", "sensor_flat", "sensor_mean_slope", "sensor_mean_slope_std")
-NORMALIZATION_MODES = ("none", "subject_z", "subject_trial_z", "subject_baseline_z", "subject_baseline_whiten")
+FEATURE_MODES = ("sensor_mean", "sensor_flat", "sensor_mean_slope", "sensor_mean_slope_std", "sensor_mean_slope_std_halves")
+FEATURE_MODE_PRESETS = {
+    "compact_time": ("sensor_mean", "sensor_mean_slope", "sensor_mean_slope_std", "sensor_mean_slope_std_halves"),
+    "rich_time": ("sensor_mean", "sensor_mean_slope", "sensor_mean_slope_std", "sensor_mean_slope_std_halves", "sensor_flat"),
+}
+NORMALIZATION_MODES = REPTRACE_NORMALIZATION_MODES
 ALIGNMENT_MODES = ("none", "train_class_procrustes")
-BASELINE_WHITENING_SHRINKAGE = 0.1
-BASELINE_WHITENING_EIGENVALUE_FLOOR = 1e-6
+BASELINE_WHITENING_SHRINKAGE = REPTRACE_BASELINE_WHITENING_SHRINKAGE
+BASELINE_WHITENING_EIGENVALUE_FLOOR = REPTRACE_BASELINE_WHITENING_EIGENVALUE_FLOOR
 CROSS_SUBJECT_PREDICTION_GROUP_COLUMNS = (
     "window_center_s",
     "feature_mode",
@@ -263,6 +282,8 @@ def make_cross_subject_candidate_configs(  # pylint: disable=too-many-arguments
     signflip_seed=0,
 ):
     """Build a candidate grid for nested cross-subject model selection."""
+
+    feature_modes = _expand_feature_modes(feature_modes)
 
     return tuple(
         CrossSubjectStimulusConfig(
@@ -1934,6 +1955,8 @@ def _extract_window_features(data, time_window, *, feature_mode, trial_indices=N
             feature = _sensor_mean_slope_feature(window_signal, time_vector[mask])
         elif feature_mode == "sensor_mean_slope_std":
             feature = _sensor_mean_slope_std_feature(window_signal, time_vector[mask])
+        elif feature_mode == "sensor_mean_slope_std_halves":
+            feature = _sensor_mean_slope_std_halves_feature(window_signal, time_vector[mask])
         else:
             raise ValueError(f"Unsupported feature_mode: {feature_mode}")
         features.append(feature)
@@ -1957,6 +1980,31 @@ def _sensor_mean_slope_std_feature(window_signal, window_time):
     return np.concatenate((means, slopes, stds))
 
 
+def _sensor_mean_slope_std_halves_feature(window_signal, window_time):
+    """Return compact per-channel temporal features for a fixed window.
+
+    The feature keeps the low-dimensional mean/slope/std summary and appends
+    early- and late-half means.  This gives nested LOSO a richer time-aligned
+    morphology feature without the full dimensionality of ``sensor_flat``.
+    """
+
+    window_signal = np.asarray(window_signal, dtype=float)
+    window_time = np.asarray(window_time, dtype=float).ravel()
+    means = np.mean(window_signal, axis=1)
+    slopes = _sensor_window_slopes(window_signal, window_time, means)
+    stds = np.std(window_signal, axis=1)
+    early_means, late_means = _sensor_half_window_means(window_signal)
+    return np.concatenate((means, slopes, stds, early_means, late_means))
+
+
+def _sensor_half_window_means(window_signal):
+    if window_signal.shape[1] == 1:
+        values = window_signal[:, 0]
+        return values, values
+    split = max(1, int(window_signal.shape[1] // 2))
+    return np.mean(window_signal[:, :split], axis=1), np.mean(window_signal[:, split:], axis=1)
+
+
 def _sensor_window_slopes(window_signal, window_time, means):
     if window_signal.shape[1] < 2 or np.ptp(window_time) <= 1e-12:
         return np.zeros(window_signal.shape[0], dtype=float)
@@ -1966,7 +2014,7 @@ def _sensor_window_slopes(window_signal, window_time, means):
 
 
 def _baseline_feature_statistics(data, config, n_window_samples, trial_indices):
-    if config.feature_mode in {"sensor_mean", "sensor_mean_slope", "sensor_mean_slope_std"}:
+    if config.feature_mode in {"sensor_mean", "sensor_mean_slope", "sensor_mean_slope_std", "sensor_mean_slope_std_halves"}:
         baseline_features, n_baseline_samples = _extract_window_features(data, config.baseline_window, feature_mode=config.feature_mode, trial_indices=trial_indices)
         mean = np.mean(baseline_features, axis=0, keepdims=True)
         std = np.std(baseline_features, axis=0, keepdims=True)
@@ -2000,35 +2048,23 @@ def _baseline_channel_statistics(data, baseline_window, trial_indices):
 
 def _baseline_channel_whitening_matrix(data, baseline_window, trial_indices):
     baseline_features, n_baseline_samples = _extract_window_features(data, baseline_window, feature_mode="sensor_mean", trial_indices=trial_indices)
-    covariance = _covariance_matrix(baseline_features)
-    covariance = _shrink_covariance(covariance, shrinkage=BASELINE_WHITENING_SHRINKAGE)
-    return _whitening_matrix(covariance), n_baseline_samples
+    return reptrace_baseline_channel_whitening_matrix_from_features(
+        baseline_features,
+        shrinkage=BASELINE_WHITENING_SHRINKAGE,
+        eigenvalue_floor=BASELINE_WHITENING_EIGENVALUE_FLOOR,
+    ), n_baseline_samples
 
 
 def _covariance_matrix(features):
-    features = np.asarray(features, dtype=float)
-    n_features = int(features.shape[1])
-    if features.shape[0] < 2:
-        return np.eye(n_features, dtype=float)
-    covariance = np.cov(features, rowvar=False)
-    covariance = np.asarray(covariance, dtype=float)
-    if covariance.ndim == 0:
-        covariance = covariance.reshape(1, 1)
-    return 0.5 * (covariance + covariance.T)
+    return reptrace_covariance_matrix(features)
 
 
 def _shrink_covariance(covariance, *, shrinkage):
-    covariance = np.asarray(covariance, dtype=float)
-    diagonal = np.diag(np.diag(covariance))
-    return (1.0 - float(shrinkage)) * covariance + float(shrinkage) * diagonal
+    return reptrace_shrink_covariance(covariance, shrinkage=shrinkage)
 
 
 def _whitening_matrix(covariance):
-    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-    eigen_floor = max(float(np.max(eigenvalues)) * BASELINE_WHITENING_EIGENVALUE_FLOOR, 1e-12)
-    inverse_sqrt = 1.0 / np.sqrt(np.maximum(eigenvalues, eigen_floor))
-    whitening = (eigenvectors * inverse_sqrt) @ eigenvectors.T
-    return 0.5 * (whitening + whitening.T)
+    return reptrace_whitening_matrix(covariance, eigenvalue_floor=BASELINE_WHITENING_EIGENVALUE_FLOOR)
 
 
 def _selected_trial_indices(labels, max_trials_per_class):
@@ -2114,82 +2150,48 @@ def _time_mask(time_vector, time_window):
 def _normalized_subject_features(feature_set, config):
     if feature_set.normalization == config.normalization:
         return feature_set.features
-    if config.normalization == "none":
-        return feature_set.features
-    if config.normalization == "subject_z":
-        reference = feature_set.features
-        mean = np.mean(reference, axis=0, keepdims=True)
-        std = np.std(reference, axis=0, keepdims=True)
-        return (feature_set.features - mean) / _nonzero_std(std)
-    if config.normalization == "subject_trial_z":
-        return _trial_zscore_features(feature_set.features)
-    if config.normalization == "subject_baseline_z":
-        if feature_set.baseline_feature_mean is None or feature_set.baseline_feature_std is None:
-            raise ValueError("subject_baseline_z requires baseline feature statistics.")
-        mean = feature_set.baseline_feature_mean
-        std = feature_set.baseline_feature_std
-        return (feature_set.features - mean) / std
-    if config.normalization == "subject_baseline_whiten":
-        if feature_set.baseline_feature_mean is None or feature_set.baseline_whitening_matrix is None:
-            raise ValueError("subject_baseline_whiten requires baseline feature statistics and a whitening matrix.")
-        return _baseline_whiten_features(feature_set.features, config, feature_set.baseline_feature_mean, feature_set.baseline_whitening_matrix)
-    raise ValueError(f"Unsupported normalization: {config.normalization}")
+    return reptrace_normalize_subject_features(
+        feature_set.features,
+        config.normalization,
+        baseline_feature_mean=feature_set.baseline_feature_mean,
+        baseline_feature_std=feature_set.baseline_feature_std,
+        baseline_whitening_matrix=feature_set.baseline_whitening_matrix,
+        feature_mode=config.feature_mode,
+        copy=True,
+    )
 
 
 def _normalize_features(features, config, baseline_feature_mean, baseline_feature_std, baseline_whitening_matrix):
-    features = np.asarray(features, dtype=float)
-    if config.normalization == "none":
-        return features
-    if config.normalization == "subject_z":
-        mean = np.mean(features, axis=0, keepdims=True)
-        std = _nonzero_std(np.std(features, axis=0, keepdims=True))
-        features -= mean
-        features /= std
-        return features
-    if config.normalization == "subject_trial_z":
-        return _trial_zscore_features(features)
-    if config.normalization == "subject_baseline_z":
-        if baseline_feature_mean is None or baseline_feature_std is None:
-            raise ValueError("subject_baseline_z requires baseline feature statistics.")
-        features -= baseline_feature_mean
-        features /= baseline_feature_std
-        return features
-    if config.normalization == "subject_baseline_whiten":
-        if baseline_feature_mean is None or baseline_whitening_matrix is None:
-            raise ValueError("subject_baseline_whiten requires baseline feature statistics and a whitening matrix.")
-        return _baseline_whiten_features(features, config, baseline_feature_mean, baseline_whitening_matrix)
-    raise ValueError(f"Unsupported normalization: {config.normalization}")
+    return reptrace_normalize_subject_features(
+        features,
+        config.normalization,
+        baseline_feature_mean=baseline_feature_mean,
+        baseline_feature_std=baseline_feature_std,
+        baseline_whitening_matrix=baseline_whitening_matrix,
+        feature_mode=config.feature_mode,
+        copy=False,
+    )
 
 
 def _trial_zscore_features(features):
-    features = np.asarray(features, dtype=float)
-    mean = np.mean(features, axis=1, keepdims=True)
-    std = _nonzero_std(np.std(features, axis=1, keepdims=True))
-    return (features - mean) / std
+    return reptrace_trial_zscore_features(features)
 
 
 def _baseline_whiten_features(features, config, baseline_feature_mean, baseline_whitening_matrix):
-    centered = np.asarray(features, dtype=float) - baseline_feature_mean
-    whitening_matrix = np.asarray(baseline_whitening_matrix, dtype=float)
-    if config.feature_mode == "sensor_mean":
-        return centered @ whitening_matrix.T
-    if config.feature_mode in {"sensor_flat", "sensor_mean_slope", "sensor_mean_slope_std"}:
-        return _baseline_whiten_sensor_flat_features(centered, whitening_matrix)
-    raise ValueError(f"Unsupported feature_mode: {config.feature_mode}")
+    return reptrace_baseline_whiten_features(
+        features,
+        baseline_feature_mean,
+        baseline_whitening_matrix,
+        feature_mode=config.feature_mode,
+    )
 
 
 def _baseline_whiten_sensor_flat_features(features, whitening_matrix):
-    n_channels = int(whitening_matrix.shape[0])
-    if features.shape[1] % n_channels:
-        raise ValueError("sensor_flat feature width must be a multiple of the number of whitening channels.")
-    n_window_samples = int(features.shape[1] // n_channels)
-    matrices = features.reshape(features.shape[0], n_window_samples, n_channels)
-    whitened = matrices @ whitening_matrix.T
-    return whitened.reshape(features.shape[0], -1)
+    return reptrace_baseline_whiten_feature_blocks(features, whitening_matrix)
 
 
 def _nonzero_std(std):
-    return np.where(std < 1e-12, 1.0, std)
+    return reptrace_nonzero_std(std)
 
 
 def _centered_window(center, size):
@@ -2428,6 +2430,27 @@ def _normalize_trial_cap(value):
     return value
 
 
+def _expand_feature_modes(feature_modes):
+    """Expand comma-list tokens such as ``rich_time`` for nested model grids."""
+
+    expanded: list[str] = []
+    for feature_mode in feature_modes:
+        normalized = str(feature_mode).strip().lower().replace("-", "_")
+        if normalized in FEATURE_MODE_PRESETS:
+            expanded.extend(FEATURE_MODE_PRESETS[normalized])
+        else:
+            expanded.append(_normalize_feature_mode(normalized))
+    return tuple(_dedupe_feature_modes(expanded))
+
+
+def _dedupe_feature_modes(feature_modes):
+    seen: set[str] = set()
+    for feature_mode in feature_modes:
+        if feature_mode not in seen:
+            seen.add(feature_mode)
+            yield feature_mode
+
+
 def _normalize_feature_mode(value):
     normalized = str(value).strip().lower().replace("-", "_")
     if normalized not in FEATURE_MODES:
@@ -2436,10 +2459,7 @@ def _normalize_feature_mode(value):
 
 
 def _normalize_normalization(value):
-    normalized = str(value).strip().lower().replace("-", "_")
-    if normalized not in NORMALIZATION_MODES:
-        raise ValueError(f"normalization must be one of {NORMALIZATION_MODES}.")
-    return normalized
+    return reptrace_normalize_normalization(value)
 
 
 def _normalize_alignment(value):

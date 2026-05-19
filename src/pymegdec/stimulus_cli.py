@@ -47,6 +47,7 @@ from pymegdec.stimulus_cross_subject import (
     DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_DIVERSITY,
     DEFAULT_CROSS_SUBJECT_WINDOW_CENTER,
     DEFAULT_CROSS_SUBJECT_WINDOW_SIZE,
+    FEATURE_MODE_PRESETS,
     ENSEMBLE_SCORE_NORMALIZATION_MODES,
     NORMALIZATION_MODES,
     SELECTION_ENSEMBLE_DIVERSITY_MODES,
@@ -123,6 +124,10 @@ def _feature_mode_token(value: str) -> str:
 
 def _alignment_token(value: str) -> str:
     return value.strip().lower().replace("-", "_")
+
+
+def _feature_mode_preset_help() -> str:
+    return ", ".join(sorted(FEATURE_MODE_PRESETS))
 
 
 def _parse_token_list(value: str) -> tuple[str, ...]:
@@ -550,7 +555,10 @@ def _build_cross_subject_nested_parser(prog: str | None = None) -> argparse.Argu
         "--feature-modes",
         type=_parse_feature_mode_list,
         default=(DEFAULT_CROSS_SUBJECT_FEATURE_MODE,),
-        help="Comma-separated feature modes, e.g. sensor_mean,sensor_flat.",
+        help=(
+            "Comma-separated feature modes or nested-grid presets "
+            f"({_feature_mode_preset_help()}), e.g. sensor_mean,sensor_flat or rich_time."
+        ),
     )
     parser.add_argument(
         "--normalizations",
