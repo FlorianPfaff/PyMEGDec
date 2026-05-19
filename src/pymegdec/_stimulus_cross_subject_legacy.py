@@ -51,8 +51,10 @@ DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_SIZE = 1
 DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_WEIGHTING = "uniform"
 DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_TEMPERATURE = 0.02
 DEFAULT_CROSS_SUBJECT_ENSEMBLE_SCORE_NORMALIZATION = "row_z_softmax"
+DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_DIVERSITY = "none"
 SELECTION_ENSEMBLE_WEIGHTING_MODES = ("uniform", "inner_softmax")
 ENSEMBLE_SCORE_NORMALIZATION_MODES = ("row_z_softmax", "rank_softmax")
+SELECTION_ENSEMBLE_DIVERSITY_MODES = ("none", "window", "classifier", "window_classifier", "full_config")
 NESTED_SCORE_ENSEMBLE_CLASSIFIER = "nested_topk_score_ensemble"
 NESTED_SCORE_ENSEMBLE_NORMALIZATION = DEFAULT_CROSS_SUBJECT_ENSEMBLE_SCORE_NORMALIZATION
 FEATURE_MODES = ("sensor_mean", "sensor_flat")
@@ -181,6 +183,7 @@ def evaluate_nested_cross_subject_stimulus(
     selection_ensemble_weighting=DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_WEIGHTING,
     selection_ensemble_temperature=DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_TEMPERATURE,
     selection_ensemble_score_normalization=DEFAULT_CROSS_SUBJECT_ENSEMBLE_SCORE_NORMALIZATION,
+    selection_ensemble_diversity=DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_DIVERSITY,
     progress=None,
     existing_artifacts=None,
     after_outer_fold=None,
@@ -201,6 +204,7 @@ def evaluate_nested_cross_subject_stimulus(
     selection_ensemble_weighting = _normalize_selection_ensemble_weighting(selection_ensemble_weighting)
     selection_ensemble_temperature = _normalize_selection_ensemble_temperature(selection_ensemble_temperature)
     selection_ensemble_score_normalization = _normalize_ensemble_score_normalization(selection_ensemble_score_normalization)
+    selection_ensemble_diversity = _normalize_selection_ensemble_diversity(selection_ensemble_diversity)
 
     resumed = _existing_nested_artifact_rows(existing_artifacts)
     inner_rows = resumed["inner_validation"]
@@ -226,6 +230,7 @@ def evaluate_nested_cross_subject_stimulus(
             selection_ensemble_weighting=selection_ensemble_weighting,
             selection_ensemble_temperature=selection_ensemble_temperature,
             selection_ensemble_score_normalization=selection_ensemble_score_normalization,
+            selection_ensemble_diversity=selection_ensemble_diversity,
             progress=progress,
             label_shuffle_control=label_shuffle_control,
             label_shuffle_seed=label_shuffle_seed,
@@ -435,6 +440,11 @@ def summarize_nested_cross_subject_stimulus(outer_rows, *, signflip_permutations
     label_shuffle_seed = _single_row_value(outer_rows, "label_shuffle_seed", default="")
     outer_evaluation_mode = _single_row_value(outer_rows, "outer_evaluation_mode", default="single_best")
     selection_ensemble_size = _single_row_value(outer_rows, "selection_ensemble_size", default=DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_SIZE)
+    selection_ensemble_diversity = _single_row_value(
+        outer_rows,
+        "selection_ensemble_diversity",
+        default=DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_DIVERSITY,
+    )
     selection_ensemble_score_normalization = _single_row_value(
         outer_rows,
         "selection_ensemble_score_normalization",
@@ -459,6 +469,7 @@ def summarize_nested_cross_subject_stimulus(outer_rows, *, signflip_permutations
             "selection_metric": DEFAULT_CROSS_SUBJECT_SELECTION_METRIC,
             "outer_evaluation_mode": outer_evaluation_mode,
             "selection_ensemble_size": selection_ensemble_size,
+            "selection_ensemble_diversity": selection_ensemble_diversity,
             "selection_ensemble_score_normalization": selection_ensemble_score_normalization,
             "selection_ensemble_weighting": selection_ensemble_weighting,
             "selection_ensemble_temperature": selection_ensemble_temperature,
@@ -805,6 +816,7 @@ def export_nested_cross_subject_stimulus(  # pylint: disable=too-many-arguments
     selection_ensemble_weighting=DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_WEIGHTING,
     selection_ensemble_temperature=DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_TEMPERATURE,
     selection_ensemble_score_normalization=DEFAULT_CROSS_SUBJECT_ENSEMBLE_SCORE_NORMALIZATION,
+    selection_ensemble_diversity=DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_DIVERSITY,
     progress=None,
     label_shuffle_control=False,
     label_shuffle_seed=0,
@@ -847,6 +859,7 @@ def export_nested_cross_subject_stimulus(  # pylint: disable=too-many-arguments
         selection_ensemble_weighting=selection_ensemble_weighting,
         selection_ensemble_temperature=selection_ensemble_temperature,
         selection_ensemble_score_normalization=selection_ensemble_score_normalization,
+        selection_ensemble_diversity=selection_ensemble_diversity,
         label_shuffle_control=label_shuffle_control,
         label_shuffle_seed=label_shuffle_seed,
     )
@@ -884,6 +897,7 @@ def _evaluate_nested_outer_fold(
     selection_ensemble_weighting=DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_WEIGHTING,
     selection_ensemble_temperature=DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_TEMPERATURE,
     selection_ensemble_score_normalization=DEFAULT_CROSS_SUBJECT_ENSEMBLE_SCORE_NORMALIZATION,
+    selection_ensemble_diversity=DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_DIVERSITY,
     progress=None,
     label_shuffle_control=False,
     label_shuffle_seed=0,
@@ -907,6 +921,7 @@ def _evaluate_nested_outer_fold(
         selection_ensemble_weighting=selection_ensemble_weighting,
         selection_ensemble_temperature=selection_ensemble_temperature,
         selection_ensemble_score_normalization=selection_ensemble_score_normalization,
+        selection_ensemble_diversity=selection_ensemble_diversity,
         candidate_configs=candidate_configs,
     )
     if int(selected_row["selection_ensemble_size"]) == 1:
@@ -966,6 +981,7 @@ def _evaluate_nested_outer_fold(
             "DONE outer_test_participant="
             f"{test_participant} selected_candidate={selected_row['selected_candidate_index']} "
             f"selection_ensemble_size={selected_row['selection_ensemble_size']} "
+            f"selection_ensemble_diversity={selected_row['selection_ensemble_diversity']} "
             f"score_normalization={selected_row['selection_ensemble_score_normalization']} "
             f"selection_ensemble_weighting={selected_row['selection_ensemble_weighting']} "
             f"inner_mean={selected_row['selected_inner_balanced_accuracy_mean']:.4f} "
@@ -1212,6 +1228,7 @@ def _select_nested_candidate_ensemble(
     selection_ensemble_weighting,
     selection_ensemble_temperature,
     selection_ensemble_score_normalization,
+    selection_ensemble_diversity,
     candidate_configs,
 ):
     ranked = _rank_nested_candidates(inner_rows)
@@ -1219,11 +1236,18 @@ def _select_nested_candidate_ensemble(
     weighting = _normalize_selection_ensemble_weighting(selection_ensemble_weighting)
     temperature = _normalize_selection_ensemble_temperature(selection_ensemble_temperature)
     score_normalization = _normalize_ensemble_score_normalization(selection_ensemble_score_normalization)
-    selected_rows = tuple(ranked[: min(requested_size, len(ranked))])
+    diversity = _normalize_selection_ensemble_diversity(selection_ensemble_diversity)
+    selected_rows = _select_diverse_nested_rows(
+        ranked,
+        requested_size=requested_size,
+        candidate_configs=candidate_configs,
+        diversity=diversity,
+    )
     weights = _nested_ensemble_weights(selected_rows, weighting=weighting, temperature=temperature)
     selected = dict(selected_rows[0])
     selected["selection_ensemble_requested_size"] = int(requested_size)
     selected["selection_ensemble_size"] = int(len(selected_rows))
+    selected["selection_ensemble_diversity"] = diversity
     selected["selection_ensemble_score_normalization"] = score_normalization
     selected["selection_ensemble_weighting"] = weighting
     selected["selection_ensemble_temperature"] = float(temperature)
@@ -1239,7 +1263,59 @@ def _select_nested_candidate_ensemble(
     selected["selected_ensemble_normalization_counts"] = _format_counter(Counter(config.normalization for config in selected_configs))
     selected["selected_ensemble_alignment_counts"] = _format_counter(Counter(config.alignment for config in selected_configs))
     selected["selected_ensemble_components_pca_counts"] = _format_counter(Counter(str(config.components_pca) for config in selected_configs))
+    selected["selected_ensemble_diversity_keys"] = _format_sequence(
+        _ensemble_diversity_key(candidate_configs[int(row["selected_candidate_index"]) - 1], diversity)
+        for row in selected_rows
+    )
     return selected, selected_rows
+
+
+def _select_diverse_nested_rows(ranked_rows, *, requested_size, candidate_configs, diversity):
+    ranked_rows = tuple(ranked_rows)
+    requested_size = min(_normalize_selection_ensemble_size(requested_size), len(ranked_rows))
+    diversity = _normalize_selection_ensemble_diversity(diversity)
+    if diversity == "none":
+        return tuple(ranked_rows[:requested_size])
+
+    selected = []
+    selected_indices = set()
+    seen_keys = set()
+    for row in ranked_rows:
+        key = _ensemble_diversity_key(candidate_configs[int(row["selected_candidate_index"]) - 1], diversity)
+        if key in seen_keys:
+            continue
+        selected.append(row)
+        selected_indices.add(int(row["selected_candidate_index"]))
+        seen_keys.add(key)
+        if len(selected) == requested_size:
+            return tuple(selected)
+
+    for row in ranked_rows:
+        candidate_index = int(row["selected_candidate_index"])
+        if candidate_index in selected_indices:
+            continue
+        selected.append(row)
+        if len(selected) == requested_size:
+            break
+    return tuple(selected)
+
+
+def _ensemble_diversity_key(config, diversity):
+    diversity = _normalize_selection_ensemble_diversity(diversity)
+    if diversity == "none":
+        return "all"
+    if diversity == "window":
+        return f"window={float(config.window_center):.6g}/{float(config.window_size):.6g}"
+    if diversity == "classifier":
+        return f"classifier={config.classifier}"
+    if diversity == "window_classifier":
+        return f"window={float(config.window_center):.6g}/{float(config.window_size):.6g},classifier={config.classifier}"
+    return (
+        f"window={float(config.window_center):.6g}/{float(config.window_size):.6g},"
+        f"feature={config.feature_mode},norm={config.normalization},alignment={config.alignment},"
+        f"classifier={config.classifier},param={config.classifier_param},pca={config.components_pca},"
+        f"trial_cap={config.max_trials_per_class_per_participant}"
+    )
 
 
 def _nested_ensemble_weights(
@@ -1330,6 +1406,7 @@ def _rank_nested_candidates(inner_rows):
         row["selected_inner_winner_margin"] = winner_margin if rank == 1 else selected_mean - float(row["selected_inner_balanced_accuracy_mean"])
         row["selection_ensemble_requested_size"] = DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_SIZE
         row["selection_ensemble_size"] = DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_SIZE
+        row["selection_ensemble_diversity"] = DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_DIVERSITY
         row["selection_ensemble_score_normalization"] = DEFAULT_CROSS_SUBJECT_ENSEMBLE_SCORE_NORMALIZATION
         row["selection_ensemble_weighting"] = DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_WEIGHTING
         row["selection_ensemble_temperature"] = DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_TEMPERATURE
@@ -2270,6 +2347,13 @@ def _normalize_selection_ensemble_size(value):
     if value <= 0:
         raise ValueError("selection_ensemble_size must be positive.")
     return value
+
+
+def _normalize_selection_ensemble_diversity(value):
+    normalized = str(value).strip().lower().replace("-", "_")
+    if normalized not in SELECTION_ENSEMBLE_DIVERSITY_MODES:
+        raise ValueError(f"selection_ensemble_diversity must be one of {SELECTION_ENSEMBLE_DIVERSITY_MODES}.")
+    return normalized
 
 
 def _normalize_ensemble_score_normalization(value):

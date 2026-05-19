@@ -106,6 +106,12 @@ on:
         required: true
         default: "1"
         type: string
+      selection_ensemble_diversity:
+        description: Prefer diverse candidates before filling the top-K ensemble.
+        required: true
+        default: none
+        type: choice
+        options: [none, window, classifier, window_classifier, full_config]
       selection_ensemble_score_normalization:
         description: Per-candidate score normalization before top-K ensemble averaging.
         required: true
@@ -174,6 +180,7 @@ jobs:
       CLASSIFIER_PARAMS: ${{ inputs.classifier_params }}
       COMPONENTS_PCA_VALUES: ${{ inputs.components_pca_values }}
       SELECTION_ENSEMBLE_SIZE: ${{ inputs.selection_ensemble_size }}
+      SELECTION_ENSEMBLE_DIVERSITY: ${{ inputs.selection_ensemble_diversity }}
       SELECTION_ENSEMBLE_SCORE_NORMALIZATION: ${{ inputs.selection_ensemble_score_normalization }}
       SELECTION_ENSEMBLE_WEIGHTING: ${{ inputs.selection_ensemble_weighting }}
       SELECTION_ENSEMBLE_TEMPERATURE: ${{ inputs.selection_ensemble_temperature }}
@@ -262,6 +269,7 @@ jobs:
             --classifier-params "${CLASSIFIER_PARAMS}"
             --components-pca-values "${COMPONENTS_PCA_VALUES}"
             --selection-ensemble-size "${SELECTION_ENSEMBLE_SIZE}"
+            --selection-ensemble-diversity "${SELECTION_ENSEMBLE_DIVERSITY}"
             --selection-ensemble-score-normalization "${SELECTION_ENSEMBLE_SCORE_NORMALIZATION}"
             --selection-ensemble-weighting "${SELECTION_ENSEMBLE_WEIGHTING}"
             --selection-ensemble-temperature "${SELECTION_ENSEMBLE_TEMPERATURE}"
@@ -374,6 +382,7 @@ jobs:
               f"| candidates | {summary['n_candidates']} |",
               f"| outer evaluation mode | {summary.get('outer_evaluation_mode', 'single_best')} |",
               f"| selection ensemble size | {summary.get('selection_ensemble_size', os.environ.get('SELECTION_ENSEMBLE_SIZE', '1'))} |",
+              f"| selection ensemble diversity | {summary.get('selection_ensemble_diversity', os.environ.get('SELECTION_ENSEMBLE_DIVERSITY', 'none'))} |",
               f"| ensemble score normalization | {summary.get('selection_ensemble_score_normalization', os.environ.get('SELECTION_ENSEMBLE_SCORE_NORMALIZATION', 'row_z_softmax'))} |",
               f"| selection ensemble weighting | {summary.get('selection_ensemble_weighting', os.environ.get('SELECTION_ENSEMBLE_WEIGHTING', 'uniform'))} |",
               f"| selection ensemble temperature | {summary.get('selection_ensemble_temperature', os.environ.get('SELECTION_ENSEMBLE_TEMPERATURE', '0.02'))} |",

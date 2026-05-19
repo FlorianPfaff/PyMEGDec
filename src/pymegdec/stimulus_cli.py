@@ -43,10 +43,12 @@ from pymegdec.stimulus_cross_subject import (
     DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_TEMPERATURE,
     DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_WEIGHTING,
     DEFAULT_CROSS_SUBJECT_ENSEMBLE_SCORE_NORMALIZATION,
+    DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_DIVERSITY,
     DEFAULT_CROSS_SUBJECT_WINDOW_CENTER,
     DEFAULT_CROSS_SUBJECT_WINDOW_SIZE,
     ENSEMBLE_SCORE_NORMALIZATION_MODES,
     NORMALIZATION_MODES,
+    SELECTION_ENSEMBLE_DIVERSITY_MODES,
     SELECTION_ENSEMBLE_WEIGHTING_MODES,
     CrossSubjectStimulusConfig,
     TRIAL_SELECTION_MODES,
@@ -592,6 +594,12 @@ def _build_cross_subject_nested_parser(prog: str | None = None) -> argparse.Argu
         help="Evaluate a row-z-softmax score ensemble over the top K inner-LOSO candidates instead of only the single winner.",
     )
     parser.add_argument(
+        "--selection-ensemble-diversity",
+        choices=SELECTION_ENSEMBLE_DIVERSITY_MODES,
+        default=DEFAULT_CROSS_SUBJECT_SELECTION_ENSEMBLE_DIVERSITY,
+        help="Prefer diverse candidates before filling the nested top-K ensemble.",
+    )
+    parser.add_argument(
         "--selection-ensemble-score-normalization",
         choices=ENSEMBLE_SCORE_NORMALIZATION_MODES,
         default=DEFAULT_CROSS_SUBJECT_ENSEMBLE_SCORE_NORMALIZATION,
@@ -674,6 +682,7 @@ def stimulus_cross_subject_nested(argv: Sequence[str] | None = None, prog: str |
         write_incremental=args.write_incremental,
         outer_participants=outer_participants,
         selection_ensemble_size=args.selection_ensemble_size,
+        selection_ensemble_diversity=args.selection_ensemble_diversity,
         selection_ensemble_score_normalization=args.selection_ensemble_score_normalization,
         selection_ensemble_weighting=args.selection_ensemble_weighting,
         selection_ensemble_temperature=args.selection_ensemble_temperature,
