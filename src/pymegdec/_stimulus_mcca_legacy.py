@@ -13,6 +13,10 @@ from reptrace.decoding.mcca_target import class_alignment_matrix, fit_target_mcc
 from reptrace.decoding.windowed import fit_window_model, predict_window_model, transform_window_features
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 
+from pymegdec._stimulus_cross_subject_chance import (
+    _patch_row_chance_fields,
+    _patch_summary_chance_fields,
+)
 from pymegdec.alignment_window import (
     resolved_alignment_window,
     transform_with_alignment_projection,
@@ -69,7 +73,7 @@ class CrossSubjectMCCAConfig:  # pylint: disable=too-many-instance-attributes
     mcca_subject_pca_components: int | float | None = None
     mcca_sample_mode: str = "class_repetition"
     mcca_repetitions_per_class: int | None = None
-    target_centering: str = "target_unsupervised"
+    target_centering: str = "group_mean"
     target_calibration_trials_per_class: int = 0
     target_projection_regularization: float | None = None
 
@@ -283,6 +287,8 @@ def _fold(train_sets, test_set, train_alignment_sets, test_alignment_set, config
     top2, top3, mean_rank, rank_rows = _rank_metrics(score_matrix, class_order, test_labels)
     accuracy = float(accuracy_score(test_labels, y_pred))
     balanced = float(balanced_accuracy_score(test_labels, y_pred))
+    chance_classes = _chance_classes_from_labels(test_labels, fallback=config.chance_classes)
+    chance = 1.0 / chance_classes
     meta = _meta(config)
     outer = {
         **meta,
@@ -294,7 +300,8 @@ def _fold(train_sets, test_set, train_alignment_sets, test_alignment_set, config
         "n_target_calibration_trials": n_target_calibration_trials,
         "n_scored_trials": int(np.sum(score_mask)),
         "n_classes": int(np.unique(test_labels).size),
-        "chance_accuracy": 1.0 / config.chance_classes,
+        "chance_classes": chance_classes,
+        "chance_accuracy": chance,
         "accuracy": accuracy,
         "percent": 100.0 * accuracy,
         "balanced_accuracy": balanced,
@@ -311,6 +318,7 @@ def _fold(train_sets, test_set, train_alignment_sets, test_alignment_set, config
         "actual_components_pca": bundle.actual_components_pca,
         "pca_explained_variance_percent": bundle.explained_variance_percent,
     }
+    _patch_row_chance_fields(outer, chance_classes)
     rows = []
     for output_index, (trial_index, truth, pred) in enumerate(zip(np.flatnonzero(score_mask), test_labels, y_pred, strict=True)):
         rows.append(
@@ -336,7 +344,7 @@ def summarize_cross_subject_mcca(outer_rows, *, config=None):
     raw = np.asarray([float(row["accuracy"]) for row in outer_rows])
     chance = float(outer_rows[0]["chance_accuracy"])
     diff = balanced - chance
-    return [
+    summary = [
         {
             **_meta(config),
             "n_outer_folds": len(outer_rows),
@@ -366,6 +374,12 @@ def summarize_cross_subject_mcca(outer_rows, *, config=None):
             "label_shuffle_seed": outer_rows[0].get("label_shuffle_seed", ""),
         }
     ]
+    return _patch_summary_chance_fields(
+        summary,
+        outer_rows,
+        signflip_permutations=config.signflip_permutations,
+        signflip_seed=config.signflip_seed,
+    )
 
 
 def _meta(config):
@@ -396,6 +410,15 @@ def _meta(config):
         "components_pca": config.components_pca,
         "max_trials_per_class_per_participant": config.max_trials_per_class_per_participant,
     }
+
+
+def _chance_classes_from_labels(labels, *, fallback):
+    labels = np.asarray(labels, dtype=int).ravel()
+    if labels.size:
+        n_classes = int(np.unique(labels).size)
+        if n_classes > 0:
+            return n_classes
+    return int(fallback)
 
 
 def _score_matrix(bundle, features):
@@ -637,7 +660,15 @@ def _parser(prog=None):
     parser.add_argument("--mcca-subject-pca-components", type=_optional_int, default=None)
     parser.add_argument("--mcca-sample-mode", choices=CLASS_ALIGNMENT_SAMPLE_MODES, default="class_repetition")
     parser.add_argument("--mcca-repetitions-per-class", type=int, default=None)
-    parser.add_argument("--target-centering", choices=TARGET_CENTERING_MODES, default="target_unsupervised")
+    parser.add_argument(
+        "--target-centering",
+        choices=TARGET_CENTERING_MODES,
+        default="group_mean",
+        help=(
+            "Centering used for calibration-free held-out target projection. "
+            "group_mean is strict LOSO; target_unsupervised is transductive."
+        ),
+    )
     parser.add_argument(
         "--target-calibration-trials-per-class",
         type=int,

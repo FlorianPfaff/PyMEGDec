@@ -4,7 +4,10 @@ import copy
 
 import numpy as np
 from scipy.interpolate import interp1d
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, sosfilt, sosfiltfilt
+
+
+_FILTER_PHASES = {"zero", "causal"}
 
 
 def preprocess_features(
@@ -14,11 +17,18 @@ def preprocess_features(
     window_size,
     train_window_center,
     null_window_center,
+    filter_phase="zero",
+    anti_alias_downsampling=True,
 ):
     data = _copy_preprocessing_data(data)
-    data = _filter_features_inplace(data, frequency_range[0], frequency_range[1])
+    data = _filter_features_inplace(data, frequency_range[0], frequency_range[1], filter_phase=filter_phase)
     if new_framerate != float("inf"):
-        data = _downsample_data_inplace(data, new_framerate)
+        data = _downsample_data_inplace(
+            data,
+            new_framerate,
+            anti_alias=anti_alias_downsampling,
+            filter_phase=filter_phase,
+        )
 
     train_window = (
         train_window_center - window_size / 2,
@@ -31,12 +41,17 @@ def preprocess_features(
     return stimuli_features_cell, null_features_cell
 
 
-def filter_features(data, low_freq, high_freq):
-    return _filter_features_inplace(_copy_preprocessing_data(data), low_freq, high_freq)
+def filter_features(data, low_freq, high_freq, filter_phase="zero"):
+    return _filter_features_inplace(
+        _copy_preprocessing_data(data),
+        low_freq,
+        high_freq,
+        filter_phase=filter_phase,
+    )
 
 
-def downsample_data(data, new_framerate):
-    return _downsample_data_inplace(_copy_preprocessing_data(data), new_framerate)
+def downsample_data(data, new_framerate, anti_alias=True, filter_phase="zero"):
+    return _downsample_data_inplace(_copy_preprocessing_data(data), new_framerate, anti_alias, filter_phase)
 
 
 def _copy_preprocessing_data(data):
@@ -68,7 +83,8 @@ def _copy_nested_array(value):
     return copy.deepcopy(value)
 
 
-def _filter_features_inplace(data, low_freq, high_freq):
+def _filter_features_inplace(data, low_freq, high_freq, filter_phase="zero"):
+    _require_filter_phase(filter_phase)
     sample_interval = _common_uniform_sample_interval(data)
     sample_rate = float(1 / sample_interval)
 
@@ -82,26 +98,29 @@ def _filter_features_inplace(data, low_freq, high_freq):
     if low_freq == 0 and high_freq == float("inf"):
         return data
     if low_freq == 0:
-        b, a = butter(4, high_freq / (sample_rate / 2), "low")
+        sos = butter(4, high_freq / (sample_rate / 2), "low", output="sos")
     elif high_freq != float("inf"):
         cutoff = [low_freq / (sample_rate / 2), high_freq / (sample_rate / 2)]
-        b, a = butter(4, cutoff, "bandpass")
+        sos = butter(4, cutoff, "bandpass", output="sos")
     else:
         raise ValueError("Highpass filter not supported.")
 
     for i in range(_trial_count(data)):
         trial, _time = _trial_and_time(data, i)
-        data["trial"][0][0][i] = filtfilt(b, a, trial.T, axis=0).T
+        data["trial"][0][0][i] = _filter_trial(trial, sos, filter_phase)
     return data
 
 
-def _downsample_data_inplace(data, new_framerate):
+def _downsample_data_inplace(data, new_framerate, anti_alias=True, filter_phase="zero"):
     if new_framerate <= 0:
         raise ValueError("New framerate must be positive.")
 
     sample_interval = _common_uniform_sample_interval(data)
-    raw_fs = round(float(1 / sample_interval))
+    sample_rate = float(1 / sample_interval)
+    raw_fs = round(sample_rate)
     if new_framerate != raw_fs:
+        if anti_alias:
+            _anti_alias_before_downsampling_inplace(data, sample_rate, new_framerate, filter_phase)
         step = 1 / new_framerate
         for i in range(_trial_count(data)):
             trial, time = _trial_and_time(data, i)
@@ -115,6 +134,54 @@ def _downsample_data_inplace(data, new_framerate):
             data["trial"][0][0][i] = interpolator(new_t)
             data["time"][0][0][i] = new_t[None]
     return data
+
+
+def _anti_alias_before_downsampling_inplace(data, sample_rate, new_framerate, filter_phase):
+    """Low-pass filter before interpolation-based downsampling.
+
+    The old implementation interpolated directly onto the lower-rate grid. That
+    aliases frequencies above the new Nyquist frequency and can change decoding
+    features in a signal-dependent way. Use the same phase convention as the
+    requested preprocessing filter so onset-style analyses can opt into causal
+    filtering and avoid using future samples.
+    """
+
+    _require_filter_phase(filter_phase)
+    if new_framerate >= sample_rate:
+        return data
+
+    normalized_cutoff = float(new_framerate) / float(sample_rate)
+    if not 0 < normalized_cutoff < 1:
+        raise ValueError("Anti-alias cutoff must be strictly between 0 and Nyquist.")
+
+    sos = butter(4, normalized_cutoff, "low", output="sos")
+    for i in range(_trial_count(data)):
+        trial, _time = _trial_and_time(data, i)
+        data["trial"][0][0][i] = _filter_trial(trial, sos, filter_phase)
+    return data
+
+
+def _filter_trial(trial, sos, filter_phase):
+    _require_filter_phase(filter_phase)
+    transposed = trial.T
+    if filter_phase == "zero":
+        return _sosfiltfilt(transposed, sos).T
+    return sosfilt(sos, transposed, axis=0).T
+
+
+def _sosfiltfilt(values, sos):
+    try:
+        return sosfiltfilt(sos, values, axis=0)
+    except ValueError as exc:
+        if "padlen" not in str(exc):
+            raise
+        return sosfiltfilt(sos, values, axis=0, padlen=0)
+
+
+def _require_filter_phase(filter_phase):
+    if filter_phase not in _FILTER_PHASES:
+        allowed = ", ".join(sorted(_FILTER_PHASES))
+        raise ValueError(f"filter_phase must be one of: {allowed}.")
 
 
 def extract_windows(data, train_window, null_time_window):
@@ -243,9 +310,11 @@ def _nearest_window_slice(time, time_window, trial_idx, window_name):
     _require_window_supported(time, start, stop, trial_idx, window_name)
     begin_index = int(np.argmin(np.abs(time - start)))
     end_index = int(np.argmin(np.abs(time - stop)))
-    if end_index < begin_index:
+    # Treat the requested stop time as an exclusive boundary. Python slices are
+    # half-open, and the paired null-window extraction already follows this.
+    if end_index <= begin_index:
         raise ValueError(f"{window_name.capitalize()} window is empty for trial {trial_idx}.")
-    return slice(begin_index, end_index + 1)
+    return slice(begin_index, end_index)
 
 
 def _matching_sample_window_slice(time, start, sample_count, trial_idx, window_name):

@@ -66,10 +66,12 @@ from pymegdec.stimulus_decoding import (
     DEFAULT_ONSET_SCAN_STEP_S,
     DEFAULT_ONSET_SCAN_TIME_WINDOW,
     DEFAULT_ONSET_SCAN_TRAIN_WINDOW_CENTER,
+    DEFAULT_ONSET_SCORE_TYPE,
     DEFAULT_ONSET_THRESHOLD_METHOD,
     DEFAULT_ONSET_THRESHOLD_QUANTILE,
     DEFAULT_ONSET_THRESHOLD_WINDOW,
     ONSET_THRESHOLD_METHODS,
+    ONSET_SCORE_TYPES,
     TRANSFER_DIRECTIONS,
     StimulusDecodingConfig,
     evaluate_participant_stimulus_decoding_diagnostics,
@@ -827,6 +829,12 @@ def _build_onset_scan_parser(prog: str | None = None) -> argparse.ArgumentParser
         default=DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION,
         help="Break onset runs when the predicted stimulus changes across adjacent above-threshold windows.",
     )
+    parser.add_argument(
+        "--onset-score-type",
+        choices=ONSET_SCORE_TYPES,
+        default=DEFAULT_ONSET_SCORE_TYPE,
+        help="Score used for onset thresholding: true_class_score tests evidence for the actual stimulus; predicted_class_score preserves the legacy confidence trigger.",
+    )
     parser.add_argument("--detection-start-s", type=parse_float_or_inf, default=None, help="Optional earliest scan center considered for first detection.")
     _add_model_args(parser, include_transfer_direction=True)
     parser.add_argument("--output", default="outputs/stimulus_onset_scan.csv", help="Output CSV with one row per validation trial and scan window.")
@@ -848,6 +856,7 @@ def stimulus_onset_scan(argv: Sequence[str] | None = None, prog: str | None = No
     data_folder = resolve_data_folder(args.data_folder)
     participants = _participants_or_error(parser, args.participants, data_folder)
     config = _base_config(args, window_centers=window_centers_from_range(args.scan_time_window, args.window_step_s))
+    config = replace(config, onset_score_type=args.onset_score_type)
     scan_rows, event_rows, summary_rows, event_summary_rows = export_stimulus_onset_scan(
         data_folder,
         participants,

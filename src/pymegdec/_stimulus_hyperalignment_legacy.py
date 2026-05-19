@@ -18,6 +18,10 @@ from reptrace.decoding.hyperalignment import (
 from reptrace.decoding.windowed import fit_window_model, predict_window_model, transform_window_features
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 
+from pymegdec._stimulus_cross_subject_chance import (
+    _patch_row_chance_fields,
+    _patch_summary_chance_fields,
+)
 from pymegdec.alignment_window import (
     resolved_alignment_window,
     transform_with_alignment_projection,
@@ -50,7 +54,7 @@ from pymegdec.stimulus_cross_subject import (
 HYPERALIGNMENT_TARGET_CENTERING_MODES = ("group_mean", "target_unsupervised")
 DEFAULT_HYPERALIGNMENT_COMPONENTS = 64
 DEFAULT_HYPERALIGNMENT_SAMPLE_MODE = "class_repetition"
-DEFAULT_HYPERALIGNMENT_TARGET_CENTERING = "target_unsupervised"
+DEFAULT_HYPERALIGNMENT_TARGET_CENTERING = "group_mean"
 ALIGNMENT_DATASETS = ("main", "cue")
 
 
@@ -88,9 +92,10 @@ def evaluate_cross_subject_hyperalignment(data_folder, participants, *, config=N
 
     With the default ``target_calibration_trials_per_class=0``, the held-out
     participant is transformed by the average training-subject hyperalignment projection.
-    This is calibration-free with respect to target labels. Setting a positive
-    target-calibration count estimates a target-specific Procrustes projection from
-    those labeled target trials and excludes them from scoring.
+    The default ``target_centering='group_mean'`` keeps this strict LOSO by not
+    centering on scored held-out target features. Setting ``target_centering`` to
+    ``target_unsupervised`` is a transductive variant. Setting a positive target-
+    calibration count uses labeled target trials and excludes them from scoring.
     """
 
     config = _normalized_hyperalignment_config(config or CrossSubjectHyperalignmentConfig())
@@ -224,7 +229,7 @@ def summarize_cross_subject_hyperalignment(outer_rows, *, config=None):
     chance = float(outer_rows[0]["chance_accuracy"])
     differences = balanced - chance
     selected_actual_components = Counter(int(row["hyperalignment_actual_components"]) for row in outer_rows)
-    return [
+    summary = [
         {
             "n_outer_folds": len(outer_rows),
             "n_test_participants": len(outer_rows),
@@ -285,6 +290,12 @@ def summarize_cross_subject_hyperalignment(outer_rows, *, config=None):
             "one_sided_signflip_p_value": _one_sided_signflip_p_value(differences, n_permutations=config.signflip_permutations, seed=config.signflip_seed),
         }
     ]
+    return _patch_summary_chance_fields(
+        summary,
+        outer_rows,
+        signflip_permutations=config.signflip_permutations,
+        signflip_seed=config.signflip_seed,
+    )
 
 
 def _evaluate_hyperalignment_outer_fold(  # pylint: disable=too-many-locals
@@ -458,10 +469,11 @@ def _outer_row(  # pylint: disable=too-many-arguments
 ):
     accuracy = float(accuracy_score(test_labels, predictions)) if len(test_labels) else np.nan
     balanced = float(balanced_accuracy_score(test_labels, predictions)) if len(test_labels) else np.nan
-    chance = 1.0 / config.chance_classes
+    chance_classes = _chance_classes_from_labels(test_labels, fallback=config.chance_classes)
+    chance = 1.0 / chance_classes
     window = _centered_window(config.window_center, config.window_size)
     alignment_window = resolved_alignment_window(config)
-    return {
+    row = {
         "test_participant": int(test_set.participant),
         "train_participants": ",".join(str(int(feature_set.participant)) for feature_set in train_sets),
         "n_train_participants": len(train_sets),
@@ -469,6 +481,7 @@ def _outer_row(  # pylint: disable=too-many-arguments
         "n_test_trials": int(n_scored_trials),
         "n_target_calibration_trials": int(n_calibration_trials),
         "n_scored_trials": int(n_scored_trials),
+        "n_classes": int(np.unique(test_labels).size),
         "window_center_s": config.window_center,
         "window_size_s": config.window_size,
         "window_start_s": window[0],
@@ -499,6 +512,7 @@ def _outer_row(  # pylint: disable=too-many-arguments
         "actual_components_pca": model_bundle.actual_components_pca,
         "pca_explained_variance_percent": model_bundle.explained_variance_percent,
         "max_trials_per_class_per_participant": config.max_trials_per_class_per_participant,
+        "chance_classes": chance_classes,
         "chance_accuracy": chance,
         "chance_percent": 100.0 * chance,
         "accuracy": accuracy,
@@ -512,6 +526,8 @@ def _outer_row(  # pylint: disable=too-many-arguments
         "top3_percent": 100.0 * top_metrics["top3_accuracy"] if np.isfinite(top_metrics["top3_accuracy"]) else np.nan,
         "mean_true_label_rank": top_metrics["mean_true_label_rank"],
     }
+    _patch_row_chance_fields(row, chance_classes)
+    return row
 
 
 def _prediction_rows(  # pylint: disable=too-many-arguments
@@ -614,6 +630,15 @@ def _true_label_ranks(true_labels, class_scores, score_classes):
         matches = np.flatnonzero(ranked_classes == true_label)
         ranks.append(float(matches[0] + 1) if matches.size else np.nan)
     return ranks
+
+
+def _chance_classes_from_labels(labels, *, fallback):
+    labels = np.asarray(labels, dtype=int).ravel()
+    if labels.size:
+        n_classes = int(np.unique(labels).size)
+        if n_classes > 0:
+            return n_classes
+    return int(fallback)
 
 
 def _target_calibration_mask(labels, trials_per_class):
@@ -921,7 +946,10 @@ def _build_cross_subject_hyperalignment_parser(prog: str | None = None) -> argpa
         "--target-centering",
         choices=HYPERALIGNMENT_TARGET_CENTERING_MODES,
         default=DEFAULT_HYPERALIGNMENT_TARGET_CENTERING,
-        help="Centering used with the calibration-free group projection.",
+        help=(
+            "Centering used with the calibration-free group projection. "
+            "group_mean is strict LOSO; target_unsupervised is transductive."
+        ),
     )
     parser.add_argument("--max-trials-per-class-per-participant", type=int, default=None, help="Optional deterministic cap on trials per stimulus class and participant.")
     parser.add_argument("--chance-classes", type=int, default=DEFAULT_CROSS_SUBJECT_CHANCE_CLASSES, help="Number of stimulus classes used for chance level.")

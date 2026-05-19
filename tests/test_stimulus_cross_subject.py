@@ -330,6 +330,42 @@ class TestStimulusCrossSubject(unittest.TestCase):
         self.assertEqual(feature_set.trial_indices.tolist(), [1, 2, 3, 4])
         self.assertEqual(feature_set.labels.tolist(), [2, 1, 2, 1])
 
+    def test_trial_cap_does_not_cap_subject_baseline_z_statistics(self):
+        time = np.asarray([-0.5, 0.0, 0.1, 0.2], dtype=float)
+        trials = [
+            [[0.0, 0.0, 100.0, 100.0], [0.0, 0.0, 100.0, 100.0]],
+            [[0.0, 0.0, 200.0, 200.0], [0.0, 0.0, 200.0, 200.0]],
+            [[10.0, 10.0, 300.0, 300.0], [10.0, 10.0, 300.0, 300.0]],
+            [[10.0, 10.0, 400.0, 400.0], [10.0, 10.0, 400.0, 400.0]],
+        ]
+        data_by_participant = {1: _mat_data_from_trials([1, 2, 1, 2], trials, time)}
+        config = CrossSubjectStimulusConfig(
+            window_center=0.15,
+            window_size=0.1,
+            feature_mode="sensor_flat",
+            normalization="subject_baseline_z",
+            components_pca=float("inf"),
+            max_trials_per_class_per_participant=1,
+            trial_selection="first",
+            chance_classes=2,
+        )
+
+        with patch("pymegdec.stimulus_cross_subject.sio.loadmat", side_effect=_loadmat_side_effect(data_by_participant)):
+            feature_set = load_participant_stimulus_features("unused", 1, config=config)
+
+        self.assertEqual(feature_set.trial_indices.tolist(), [0, 1])
+        self.assertEqual(feature_set.labels.tolist(), [1, 2])
+        np.testing.assert_allclose(
+            feature_set.baseline_feature_mean,
+            np.full((1, 4), 5.0),
+        )
+        np.testing.assert_allclose(
+            feature_set.baseline_feature_std,
+            np.full((1, 4), 5.0),
+        )
+        np.testing.assert_allclose(feature_set.features[0], np.full(4, 19.0))
+        np.testing.assert_allclose(feature_set.features[1], np.full(4, 39.0))
+
     def test_auto_classifier_param_grid_expands_per_classifier(self):
         candidate_configs = make_cross_subject_candidate_configs(
             window_centers=(0.2,),

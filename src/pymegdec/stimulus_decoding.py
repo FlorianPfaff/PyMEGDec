@@ -23,7 +23,10 @@ DEFAULT_ONSET_THRESHOLD_METHOD = _core.DEFAULT_ONSET_THRESHOLD_METHOD
 DEFAULT_ONSET_MIN_CONSECUTIVE = _core.DEFAULT_ONSET_MIN_CONSECUTIVE
 DEFAULT_ONSET_MIN_DURATION = _core.DEFAULT_ONSET_MIN_DURATION
 DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION = _core.DEFAULT_ONSET_REQUIRE_STABLE_PREDICTION
-ONSET_SCORE_TYPE_PREDICTED_CLASS = "predicted_class_score"
+ONSET_SCORE_TYPE_TRUE_CLASS = _core.ONSET_SCORE_TYPE_TRUE_CLASS
+ONSET_SCORE_TYPE_PREDICTED_CLASS = _core.ONSET_SCORE_TYPE_PREDICTED_CLASS
+ONSET_SCORE_TYPES = _core.ONSET_SCORE_TYPES
+DEFAULT_ONSET_SCORE_TYPE = _core.DEFAULT_ONSET_SCORE_TYPE
 window_centers_from_range = _core.window_centers_from_range
 summarize_stimulus_decoding_peaks = _core.summarize_stimulus_decoding_peaks
 summarize_stimulus_prediction_diagnostics = _core.summarize_stimulus_prediction_diagnostics
@@ -364,7 +367,9 @@ def _patch_onset_score_columns(rows):
         correct = bool(patched.get("correct", False))
         true_score = _to_float(patched.get("true_class_score", predicted_score if correct else _np.nan))
         score_margin = _to_float(patched.get("score_margin", _np.nan))
-        onset_score = _to_float(patched.get("onset_score", predicted_score))
+        onset_score = _to_float(patched.get("onset_score", _np.nan))
+        if not _np.isfinite(onset_score):
+            onset_score = predicted_score
         patched["predicted_class_score"] = predicted_score
         patched["true_class_score"] = true_score
         patched["score_margin"] = score_margin
@@ -385,7 +390,7 @@ def _patch_onset_event_score_columns(rows):
         predicted_score = _to_float(patched.get("predicted_class_score_at_detection", detection_score))
         correct = bool(patched.get("correct_detected_stimulus", False))
         true_score = _to_float(patched.get("true_class_score_at_detection", predicted_score if correct else _np.nan))
-        patched["onset_score_at_detection"] = _to_float(patched.get("onset_score_at_detection", predicted_score))
+        patched["onset_score_at_detection"] = _to_float(patched.get("onset_score_at_detection", detection_score))
         patched["onset_score_type"] = patched.get("onset_score_type") or ONSET_SCORE_TYPE_PREDICTED_CLASS
         patched["predicted_class_score_at_detection"] = predicted_score
         patched["true_class_score_at_detection"] = true_score

@@ -292,6 +292,7 @@ def load_participant_stimulus_features(data_folder, participant, *, config=None)
     data_path = _impl.Path(_impl.resolve_data_folder(data_folder)) / f"Part{int(participant)}Data.mat"
     data = _impl.sio.loadmat(data_path)["data"][0]
     all_labels = _impl._trialinfo_labels(data)
+    baseline_trial_indices = np.arange(all_labels.shape[0], dtype=int)
     trial_indices = _selected_trial_indices(
         all_labels,
         config.max_trials_per_class_per_participant,
@@ -311,17 +312,20 @@ def load_participant_stimulus_features(data_folder, participant, *, config=None)
     baseline_whitening_matrix = None
     n_baseline_samples = 0
     if config.normalization in ("subject_baseline_z", "subject_baseline_whiten"):
+        # Trial caps restrict the scored decoding examples only. The baseline
+        # estimate remains participant-level so cap settings do not change
+        # scaling or whitening.
         baseline_feature_mean, baseline_feature_std, n_baseline_samples = _impl._baseline_feature_statistics(
             data,
             config,
             n_window_samples,
-            trial_indices,
+            baseline_trial_indices,
         )
     if config.normalization == "subject_baseline_whiten":
         baseline_whitening_matrix, n_baseline_samples = _impl._baseline_channel_whitening_matrix(
             data,
             config.baseline_window,
-            trial_indices,
+            baseline_trial_indices,
         )
     normalized_features = _impl._normalize_features(
         features,

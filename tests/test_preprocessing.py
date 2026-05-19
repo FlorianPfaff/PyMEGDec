@@ -83,12 +83,27 @@ class TestPreprocessing(unittest.TestCase):
         )
         data = _data([trial.copy()], [time.copy()])
 
-        downsampled = downsample_data(data, 2)
+        downsampled = downsample_data(data, 2, anti_alias=False)
 
         np.testing.assert_allclose(downsampled["time"][0][0][0], [[0.0, 0.5, 1.0]])
         np.testing.assert_allclose(
             downsampled["trial"][0][0][0],
             [[1.0, 3.0, 5.0], [10.0, 14.0, 18.0]],
+        )
+
+    def test_downsample_antialiases_before_interpolation_by_default(self):
+        raw_framerate = 200.0
+        time = np.arange(0.0, 1.0, 1.0 / raw_framerate)[None, :]
+        high_frequency = np.sin(2 * np.pi * 33.0 * time.ravel())[None, :]
+        data = _data([high_frequency.copy()], [time.copy()])
+
+        aliased = downsample_data(data, 20, anti_alias=False)["trial"][0][0][0]
+        filtered = downsample_data(data, 20)["trial"][0][0][0]
+
+        self.assertEqual(aliased.shape, filtered.shape)
+        self.assertLess(
+            np.std(filtered),
+            0.5 * np.std(aliased),
         )
 
     def test_downsample_does_not_mutate_scipy_loaded_struct_arrays(self):
@@ -119,6 +134,25 @@ class TestPreprocessing(unittest.TestCase):
         np.testing.assert_allclose(data["trial"][0][0][1], original_second_trial)
         self.assertFalse(np.allclose(filtered["trial"][0][0][1], original_second_trial))
         self.assertEqual(filtered["trial"][0][0][1].shape, original_second_trial.shape)
+
+    def test_filter_features_supports_causal_filter_without_future_leakage(self):
+        time = np.arange(-0.2, 0.6, 0.01)[None, :]
+        impulse_index = int(np.flatnonzero(time.ravel() >= 0.3)[0])
+        trial = np.zeros((1, time.size))
+        trial[0, impulse_index] = 1.0
+        data = _data([trial.copy()], [time.copy()])
+
+        filtered = filter_features(data, 0, 10, filter_phase="causal")
+
+        np.testing.assert_allclose(filtered["trial"][0][0][0][0, :impulse_index], 0.0, atol=1e-12)
+
+    def test_filter_features_rejects_unknown_filter_phase(self):
+        time = np.arange(0.0, 1.0, 0.01)[None, :]
+        trial = np.sin(2 * np.pi * 5 * time.ravel())[None, :]
+        data = _data([trial.copy()], [time.copy()])
+
+        with self.assertRaisesRegex(ValueError, "filter_phase"):
+            filter_features(data, 0, 10, filter_phase="backward")
 
     def test_preprocess_features_does_not_mutate_input_between_configurations(self):
         time = np.arange(-0.4, 0.6, 0.01)[None, :]

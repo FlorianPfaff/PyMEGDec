@@ -2,8 +2,16 @@ from unittest.mock import patch
 
 import numpy as np
 
-from pymegdec.stimulus_hyperalignment import CrossSubjectHyperalignmentConfig, evaluate_cross_subject_hyperalignment
-from pymegdec.stimulus_mcca import CrossSubjectMCCAConfig, evaluate_cross_subject_mcca
+from pymegdec.stimulus_hyperalignment import (
+    CrossSubjectHyperalignmentConfig,
+    evaluate_cross_subject_hyperalignment,
+    summarize_cross_subject_hyperalignment,
+)
+from pymegdec.stimulus_mcca import (
+    CrossSubjectMCCAConfig,
+    evaluate_cross_subject_mcca,
+    summarize_cross_subject_mcca,
+)
 from tests.matlab_fixtures import cell_array
 
 
@@ -67,6 +75,80 @@ def _toy_cue_data_missing_third_class():
     return data
 
 
+def test_cross_subject_mcca_summary_uses_per_fold_chance_levels():
+    outer_rows = [
+        {
+            "accuracy": 0.4,
+            "balanced_accuracy": 0.4,
+            "chance_classes": 2,
+            "chance_accuracy": 0.5,
+            "top2_accuracy": 0.8,
+            "top3_accuracy": 1.0,
+            "mean_true_label_rank": 1.4,
+        },
+        {
+            "accuracy": 0.4,
+            "balanced_accuracy": 0.4,
+            "chance_classes": 3,
+            "chance_accuracy": 1.0 / 3.0,
+            "top2_accuracy": 0.8,
+            "top3_accuracy": 1.0,
+            "mean_true_label_rank": 1.4,
+        },
+    ]
+    config = CrossSubjectMCCAConfig(signflip_permutations=0)
+
+    summary = summarize_cross_subject_mcca(outer_rows, config=config)[0]
+
+    expected_chance = (0.5 + 1.0 / 3.0) / 2.0
+    expected_above = ((0.4 - 0.5) + (0.4 - 1.0 / 3.0)) / 2.0
+    assert np.isclose(summary["chance_accuracy"], expected_chance)
+    assert np.isclose(summary["mean_above_chance"], expected_above)
+    assert np.isclose(summary["top2_chance_accuracy"], (1.0 + 2.0 / 3.0) / 2.0)
+    counts = set(summary["chance_classes_counts"].replace(" ", "").split(";"))
+    assert counts == {"2:1", "3:1"}
+    assert summary["participants_above_chance"] == 1
+    assert summary["participants_at_or_below_chance"] == 1
+
+
+def test_cross_subject_hyperalignment_summary_uses_per_fold_chance_levels():
+    outer_rows = [
+        {
+            "accuracy": 0.4,
+            "balanced_accuracy": 0.4,
+            "chance_classes": 2,
+            "chance_accuracy": 0.5,
+            "top2_accuracy": 0.8,
+            "top3_accuracy": 1.0,
+            "mean_true_label_rank": 1.4,
+            "hyperalignment_actual_components": 2,
+        },
+        {
+            "accuracy": 0.4,
+            "balanced_accuracy": 0.4,
+            "chance_classes": 3,
+            "chance_accuracy": 1.0 / 3.0,
+            "top2_accuracy": 0.8,
+            "top3_accuracy": 1.0,
+            "mean_true_label_rank": 1.4,
+            "hyperalignment_actual_components": 2,
+        },
+    ]
+    config = CrossSubjectHyperalignmentConfig(signflip_permutations=0)
+
+    summary = summarize_cross_subject_hyperalignment(outer_rows, config=config)[0]
+
+    expected_chance = (0.5 + 1.0 / 3.0) / 2.0
+    expected_above = ((0.4 - 0.5) + (0.4 - 1.0 / 3.0)) / 2.0
+    assert np.isclose(summary["chance_accuracy"], expected_chance)
+    assert np.isclose(summary["mean_above_chance"], expected_above)
+    assert np.isclose(summary["top2_chance_accuracy"], (1.0 + 2.0 / 3.0) / 2.0)
+    counts = set(summary["chance_classes_counts"].replace(" ", "").split(";"))
+    assert counts == {"2:1", "3:1"}
+    assert summary["participants_above_chance"] == 1
+    assert summary["participants_at_or_below_chance"] == 1
+
+
 def test_cross_subject_mcca_exports_full_loso_artifacts():
     config = CrossSubjectMCCAConfig(
         window_center=0.2,
@@ -80,6 +162,7 @@ def test_cross_subject_mcca_exports_full_loso_artifacts():
         chance_classes=2,
         signflip_permutations=32,
     )
+    assert config.target_centering == "group_mean"
     with patch("pymegdec.stimulus_cross_subject.sio.loadmat", side_effect=_loadmat_side_effect(_toy_data_by_participant())):
         artifacts = evaluate_cross_subject_mcca("unused", [1, 2, 3, 4], config=config)
     assert len(artifacts["outer"]) == 4
@@ -87,6 +170,8 @@ def test_cross_subject_mcca_exports_full_loso_artifacts():
     assert len(artifacts["group_summary"]) == 1
     assert artifacts["confusion"]
     assert artifacts["per_stimulus"]
+    assert all(row["target_centering"] == "group_mean" for row in artifacts["outer"])
+    assert all(row["target_transform"] == "group_projection" for row in artifacts["outer"])
     assert all(row["alignment"] == "mcca_group_projection" for row in artifacts["outer"])
     assert all("top2_accuracy" in row and "mean_true_label_rank" in row for row in artifacts["outer"])
     assert all("true_label_rank" in row for row in artifacts["predictions"])
@@ -222,6 +307,7 @@ def test_cross_subject_hyperalignment_exports_full_loso_artifacts():
         chance_classes=2,
         signflip_permutations=32,
     )
+    assert config.target_centering == "group_mean"
     with patch("pymegdec.stimulus_cross_subject.sio.loadmat", side_effect=_loadmat_side_effect(_toy_data_by_participant())):
         artifacts = evaluate_cross_subject_hyperalignment("unused", [1, 2, 3, 4], config=config)
     assert len(artifacts["outer"]) == 4
@@ -229,6 +315,8 @@ def test_cross_subject_hyperalignment_exports_full_loso_artifacts():
     assert len(artifacts["group_summary"]) == 1
     assert artifacts["confusion"]
     assert artifacts["per_stimulus"]
+    assert all(row["target_centering"] == "group_mean" for row in artifacts["outer"])
+    assert all(row["target_transform"] == "group_average" for row in artifacts["outer"])
     assert all(row["alignment"] == "class_hyperalignment_group_average" for row in artifacts["outer"])
     assert all("top2_accuracy" in row and "top3_accuracy" in row for row in artifacts["outer"])
     assert all("mean_true_label_rank" in row for row in artifacts["outer"])
