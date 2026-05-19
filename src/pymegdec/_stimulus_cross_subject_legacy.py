@@ -57,7 +57,7 @@ ENSEMBLE_SCORE_NORMALIZATION_MODES = ("row_z_softmax", "rank_softmax")
 SELECTION_ENSEMBLE_DIVERSITY_MODES = ("none", "window", "classifier", "window_classifier", "full_config")
 NESTED_SCORE_ENSEMBLE_CLASSIFIER = "nested_topk_score_ensemble"
 NESTED_SCORE_ENSEMBLE_NORMALIZATION = DEFAULT_CROSS_SUBJECT_ENSEMBLE_SCORE_NORMALIZATION
-FEATURE_MODES = ("sensor_mean", "sensor_flat", "sensor_mean_slope")
+FEATURE_MODES = ("sensor_mean", "sensor_flat", "sensor_mean_slope", "sensor_mean_slope_std")
 NORMALIZATION_MODES = ("none", "subject_z", "subject_trial_z", "subject_baseline_z", "subject_baseline_whiten")
 ALIGNMENT_MODES = ("none", "train_class_procrustes")
 BASELINE_WHITENING_SHRINKAGE = 0.1
@@ -1932,6 +1932,8 @@ def _extract_window_features(data, time_window, *, feature_mode, trial_indices=N
             feature = window_signal.reshape(-1, order="F")
         elif feature_mode == "sensor_mean_slope":
             feature = _sensor_mean_slope_feature(window_signal, time_vector[mask])
+        elif feature_mode == "sensor_mean_slope_std":
+            feature = _sensor_mean_slope_std_feature(window_signal, time_vector[mask])
         else:
             raise ValueError(f"Unsupported feature_mode: {feature_mode}")
         features.append(feature)
@@ -1942,17 +1944,29 @@ def _sensor_mean_slope_feature(window_signal, window_time):
     window_signal = np.asarray(window_signal, dtype=float)
     window_time = np.asarray(window_time, dtype=float).ravel()
     means = np.mean(window_signal, axis=1)
-    if window_signal.shape[1] < 2 or np.ptp(window_time) <= 1e-12:
-        slopes = np.zeros(window_signal.shape[0], dtype=float)
-    else:
-        scaled_time = (window_time - np.mean(window_time)) / np.ptp(window_time)
-        denominator = float(np.sum(np.square(scaled_time)))
-        slopes = (window_signal - means[:, None]) @ scaled_time / denominator
+    slopes = _sensor_window_slopes(window_signal, window_time, means)
     return np.concatenate((means, slopes))
 
 
+def _sensor_mean_slope_std_feature(window_signal, window_time):
+    window_signal = np.asarray(window_signal, dtype=float)
+    window_time = np.asarray(window_time, dtype=float).ravel()
+    means = np.mean(window_signal, axis=1)
+    slopes = _sensor_window_slopes(window_signal, window_time, means)
+    stds = np.std(window_signal, axis=1)
+    return np.concatenate((means, slopes, stds))
+
+
+def _sensor_window_slopes(window_signal, window_time, means):
+    if window_signal.shape[1] < 2 or np.ptp(window_time) <= 1e-12:
+        return np.zeros(window_signal.shape[0], dtype=float)
+    scaled_time = (window_time - np.mean(window_time)) / np.ptp(window_time)
+    denominator = float(np.sum(np.square(scaled_time)))
+    return (window_signal - means[:, None]) @ scaled_time / denominator
+
+
 def _baseline_feature_statistics(data, config, n_window_samples, trial_indices):
-    if config.feature_mode in {"sensor_mean", "sensor_mean_slope"}:
+    if config.feature_mode in {"sensor_mean", "sensor_mean_slope", "sensor_mean_slope_std"}:
         baseline_features, n_baseline_samples = _extract_window_features(data, config.baseline_window, feature_mode=config.feature_mode, trial_indices=trial_indices)
         mean = np.mean(baseline_features, axis=0, keepdims=True)
         std = np.std(baseline_features, axis=0, keepdims=True)
@@ -2159,7 +2173,7 @@ def _baseline_whiten_features(features, config, baseline_feature_mean, baseline_
     whitening_matrix = np.asarray(baseline_whitening_matrix, dtype=float)
     if config.feature_mode == "sensor_mean":
         return centered @ whitening_matrix.T
-    if config.feature_mode in {"sensor_flat", "sensor_mean_slope"}:
+    if config.feature_mode in {"sensor_flat", "sensor_mean_slope", "sensor_mean_slope_std"}:
         return _baseline_whiten_sensor_flat_features(centered, whitening_matrix)
     raise ValueError(f"Unsupported feature_mode: {config.feature_mode}")
 
